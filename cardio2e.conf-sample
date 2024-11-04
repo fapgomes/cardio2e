@@ -1,0 +1,29 @@
+[global]
+debug = 0
+ha_discover_prefix = homeassistant
+[cardio2e]
+# serial port config
+serial_port = /dev/ttyUSB0
+baudrate = 9600
+
+# lights config
+fetch_light_names = true  # on startup will fetch the current name of lights. After the first time can be disabled.
+skip_init_light_state = false  # on startup will fetch the current state of lights
+nlights = 50  # number of lights in you system
+dimmer_lights = [1, 2, 3, 4, 5]  # dimmer lights will be treated with brightness
+
+# switch config
+fetch_switch_names = true  # on startup will fetch the current name of switches. After the first time can be disabled.
+skip_init_switch_state = true  # on startup will fetch the current state of switches
+nswitches = 16  # number of switches in you system
+
+# zones config
+fetch_zone_names = true # on startup will fetch the current name of zones. After the first time can be disabled.
+nzones = 16  # number of zones in you system
+zones_normal_as_off = [14]       # this zones, will return off when N is returned
+
+[mqtt]
+address = 192.168.1.100
+port = 1883
+username = cardio2e
+password = <you password to the mqtt server>
