@@ -8,6 +8,8 @@ import json
 import time
 import configparser
 import ast
+import signal
+import re
 
 from cardio2e_modules import cardio2e_zones
 
@@ -44,8 +46,14 @@ CARDIO2E_FETCH_SWITCH_NAMES = config['cardio2e'].get('fetch_switch_names', 'fals
 CARDIO2E_SKIP_INIT_SWITCH_STATE = config['cardio2e'].get('skip_init_switch_state', 'false').lower() == 'true'
 CARDIO2E_NSWITCHES = int(config['cardio2e'].get('nswitches', 16))
 
+### COVER
+CARDIO2E_FETCH_COVER_NAMES = config['cardio2e'].get('fetch_cover_names', 'false').lower() == 'true'
+CARDIO2E_SKIP_INIT_COVER_STATE = config['cardio2e'].get('skip_init_cover_state', 'false').lower() == 'true'
+CARDIO2E_NCOVERS = int(config['cardio2e'].get('ncovers', 20))
+
 ### ZONES
 CARDIO2E_FETCH_ZONE_NAMES = config['cardio2e'].get('fetch_zone_names', 'false').lower() == 'true'
+CARDIO2E_SKIP_INIT_ZONE_STATE = config['cardio2e'].get('skip_init_zone_state', 'false').lower() == 'true'
 CARDIO2E_NZONES = int(config['cardio2e'].get('nzones', 16))
 # Processa o valor de zones_normal_as_off a partir do arquivo de configuração
 zones_normal_as_off_raw = config['cardio2e'].get('zones_normal_as_off', '[]')  # Use '[]' como padrão se não estiver no config
@@ -65,6 +73,19 @@ else:
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def create_shutdown_handler(serial_conn, mqtt_client):
+    def handle_shutdown(signum, frame):
+        """
+        Manipulador de sinais para realizar o logout antes de encerrar.
+        """
+        _LOGGER.info("Closing signal received. Logging out...")
+        cardio_login(serial_conn, mqtt_client, state="logout")
+        serial_conn.close()
+        _LOGGER.info("Logout completed. Closing the program.")
+        exit(0)
+    return handle_shutdown
+
 def main():
     try:
         # Configuração da conexão serial
@@ -79,6 +100,13 @@ def main():
         mqtt_client.username_pw_set(MQTT_USERNAME, password=MQTT_PASSWORD)
         mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
         mqtt_client.loop_start()
+
+        # Registra os sinais de encerramento
+        handle_shutdown = create_shutdown_handler(serial_conn, mqtt_client)
+        signal.signal(signal.SIGTERM, handle_shutdown)  # Sinal enviado pelo systemd ao parar o serviço
+        signal.signal(signal.SIGINT, handle_shutdown)   # Sinal de interrupção (ex.: Ctrl+C)
+
+        cardio_login(serial_conn, mqtt_client, state="login", password="000000")
 
         ############
         ### LIGHTS
@@ -111,6 +139,20 @@ def main():
         else:
             initialize_entity_states(serial_conn, mqtt_client, CARDIO2E_NZONES, "R")
         ############
+        ### COVERS
+        ############
+        if CARDIO2E_FETCH_COVER_NAMES:
+            num_covers = CARDIO2E_NCOVERS  # Ajuste conforme o número de luzes
+            for cover_id in range(1, num_covers + 1):
+                get_name(serial_conn, cover_id, "C", mqtt_client)
+        else:
+            _LOGGER.info("The flag CARDIO2E_FETCH_COVER_NAMES is desativated; I will not fetch the names.")
+        # init cover state on mqtt
+        if CARDIO2E_SKIP_INIT_COVER_STATE:
+            _LOGGER.info("Skipped initial cover state.")
+        else:
+            initialize_entity_states(serial_conn, mqtt_client, CARDIO2E_NCOVERS, "C")
+        ############
         ### ZONES
         ############
         if CARDIO2E_FETCH_ZONE_NAMES:
@@ -119,8 +161,11 @@ def main():
                 get_name(serial_conn, zone_id, "Z", mqtt_client)
         else:
             _LOGGER.info("The flag FETCH_ZONE_NAMES is desativated; I will not fetch the names.")
-        # Inicializar o estado de todas as zonas no MQTT
-        initialize_entity_states(serial_conn, mqtt_client, CARDIO2E_NZONES, "Z")
+        # init zones state on mqtt
+        if CARDIO2E_SKIP_INIT_ZONE_STATE:
+            _LOGGER.info("Skipped initial zone state.")
+        else:
+            initialize_entity_states(serial_conn, mqtt_client, CARDIO2E_NZONES, "Z")
 
         # Inicia a thread de escuta na porta serial
         listener_thread = threading.Thread(target=listen_for_updates, args=(serial_conn, mqtt_client), daemon=True)
@@ -139,6 +184,7 @@ def on_mqtt_connect(client, userdata, flags, rc):
     _LOGGER.info("Connected to broker MQTT with code %s", rc)
     client.subscribe("cardio2e/light/set/#")
     client.subscribe("cardio2e/switch/set/#")
+    client.subscribe("cardio2e/cover/set/#")
     client.subscribe("cardio2e/zone/bypass/set/#")
 
 def on_mqtt_message(client, userdata, msg):
@@ -152,7 +198,7 @@ def on_mqtt_message(client, userdata, msg):
         try:
             light_id = int(topic.split("/")[-1])
         except ValueError:
-            _LOGGER.error("ID da luz inválido no tópico: %s", topic)
+            _LOGGER.error("Invalid light ID on topic: %s", topic)
             return
 
         # Converte o payload para o comando apropriado para RS-232
@@ -177,10 +223,10 @@ def on_mqtt_message(client, userdata, msg):
         state_topic = f"cardio2e/light/state/{light_id}"
         light_state = "ON" if command > 0 else "OFF"
         client.publish(state_topic, light_state, retain=False)
-        _LOGGER.debug("Atualizando o tópico de estado para %s com valor %s", state_topic, light_state)
+        _LOGGER.debug("Updating status topic for %s with value %s", state_topic, light_state)
     
-    # verify if a switch message appears
-    if topic.startswith("cardio2e/switch/set/"):
+    # Verify if a switch message appears
+    elif topic.startswith("cardio2e/switch/set/"):
         try:
             switch_id = int(topic.split("/")[-1])
         except ValueError:
@@ -205,7 +251,32 @@ def on_mqtt_message(client, userdata, msg):
         client.publish(state_topic, switch_state, retain=False)
         _LOGGER.debug("Atualizando o tópico de estado para %s com valor %s", state_topic, switch_state)
 
-    # Verifica se a mensagem é para controle de bypass de uma zona
+    # Verifica se a mensagem é para controle de estores (cover)
+    elif topic.startswith("cardio2e/cover/set/"):
+        try:
+            cover_id = int(topic.split("/")[-1])
+        except ValueError:
+            _LOGGER.error("Topic invalid Cover ID: %s", topic)
+            return
+
+        # Tenta converter o payload diretamente para uma posição numérica (0-100)
+        try:
+            position = int(payload)
+            if position < 0 or position > 100:
+                raise ValueError("The position must be between 0 and 100")
+        except ValueError:
+            _LOGGER.error("Invalid payload for shutter position command: %s", payload)
+            return
+
+        # Envia comando para definir a posição do estore no RS-232
+        send_rs232_command(userdata["serial_conn"], "C", cover_id, position)
+
+        # Atualiza o tópico de posição do estore
+        position_topic = f"cardio2e/cover/state/{cover_id}"
+        client.publish(position_topic, position, retain=False)
+        _LOGGER.debug("Updating position topic for %s with value %d", position_topic, position)
+
+    # Checks if the message is for bypass control of a zone
     elif topic.startswith("cardio2e/zone/bypass/set/"):
         zone_bypass_states = ["N"] * CARDIO2E_NZONES  # 'N' significa ativo, 'Y' significa bypass
         try:
@@ -234,7 +305,7 @@ def on_mqtt_message(client, userdata, msg):
 
 def send_rs232_command(serial_conn, entity_type, entity_id, state):
     """Envia comando para o RS-232 para alterar o estado da luz ou bypass da zona."""
-    command = f"@S {entity_type} {entity_id} {state}\n\r"  # Comando para controle de luz
+    command = f"@S {entity_type} {entity_id} {state}\r"  # Comando para controle de luz
     try:
         _LOGGER.debug("Enviando comando para RS-232: %s", command)
         serial_conn.write(command.encode())
@@ -245,6 +316,9 @@ def send_rs232_command(serial_conn, entity_type, entity_id, state):
 def listen_for_updates(serial_conn, mqtt_client):
     """Escuta as atualizações na porta RS-232 e publica o estado e o brilho no MQTT."""
     while True:
+        if not serial_conn.is_open:
+            _LOGGER.debug("The serial connection was closed.")
+            break
         try:
             # Ler a linha recebida do RS-232
             received_message = serial_conn.readline().decode().strip()
@@ -252,7 +326,12 @@ def listen_for_updates(serial_conn, mqtt_client):
                 _LOGGER.debug("RS-232 message received: %s", received_message)
 
                 # Dividir a linha em mensagens separadas (caso múltiplas mensagens estejam na mesma linha)
-                messages = received_message.split('@')
+                #messages = received_message.split('@')
+                # Dividir a linha em mensagens separadas com '@' e '\r' (#015) como delimitadores
+                messages = []
+                for part in received_message.split('@'):
+                    sub_parts = part.split('\r')
+                    messages.extend(sub_parts)
 
                 # Processa cada mensagem individualmente
                 for msg in messages:
@@ -261,7 +340,7 @@ def listen_for_updates(serial_conn, mqtt_client):
 
                     # Adiciona o caractere '@' de volta ao início da mensagem
                     msg = '@' + msg.strip()
-                    _LOGGER.info("Processando mensagem individual: %s", msg)
+                    _LOGGER.info("Processing individual message: %s", msg)
 
                     # Dividir a mensagem em partes para identificação
                     message_parts = msg.split()
@@ -278,6 +357,11 @@ def listen_for_updates(serial_conn, mqtt_client):
                             switch_id = int(message_parts[2])
                             # Consultar o estado atual e publicar no MQTT
                             get_entity_state(serial_conn, mqtt_client, switch_id, "R")
+                        elif message_parts[1] == "C":
+                            # Comando para controle de luz "@A R <relay_id>"
+                            cover_id = int(message_parts[2])
+                            # Consultar o estado atual e publicar no MQTT
+                            get_entity_state(serial_conn, mqtt_client, cover_id, "C")
 
                     elif len(message_parts) == 4 and message_parts[0] == "@I":
                         # Caso o estado da luz tenha sido alterado manualmente ou externamente
@@ -292,14 +376,13 @@ def listen_for_updates(serial_conn, mqtt_client):
                             # Publica o estado ON/OFF no tópico de estado
                             state_topic = f"cardio2e/light/state/{light_id}"
                             mqtt_client.publish(state_topic, light_state, retain=False)
-                            _LOGGER.info("Estado da luz %d atualizado para: %s", light_id, light_state)
+                            _LOGGER.info("Light %d state updated to: %s", light_id, light_state)
 
                             # Para luzes dimmer, publica o valor exato de brilho no tópico de brilho
                             if light_id in CARDIO2E_DIMMER_LIGHTS:
                                 brightness_topic = f"cardio2e/light/brightness/{light_id}"
                                 mqtt_client.publish(brightness_topic, state, retain=False)
-                                _LOGGER.info("Brilho da luz %d atualizado para: %d", light_id, state)
-
+                                _LOGGER.info("Light %d brightness updated to: %d", light_id, state)
                         elif message_parts[1] == "R":
                             # Estado atualizado "@I R <relay_id> <state>"
                             switch_id = int(message_parts[2])
@@ -312,8 +395,15 @@ def listen_for_updates(serial_conn, mqtt_client):
                             state_topic = f"cardio2e/switch/state/{switch_id}"
                             mqtt_client.publish(state_topic, switch_state, retain=False)
                             _LOGGER.info("Switch %d state, updated to: %s", switch_id, switch_state)
+                        elif message_parts[1] == "C":
+                            # Estado atualizado "@I C <cover_id> <state>"
+                            cover_id = int(message_parts[2])
+                            cover_state = message_parts[3]
 
-
+                            # Publica o estado ON/OFF no tópico de estado
+                            state_topic = f"cardio2e/cover/state/{cover_id}"
+                            mqtt_client.publish(state_topic, cover_state, retain=False)
+                            _LOGGER.info("Cover %d state, updated to: %s", cover_id, cover_state)
                         # Caso o estado das zonas seja atualizado
                         elif message_parts[1] == "Z":
                             # Mensagem de estado das zonas, por exemplo: "@I Z 1 CCCCCCCCCCOOOOCC"
@@ -326,7 +416,7 @@ def listen_for_updates(serial_conn, mqtt_client):
 
                                 # Publica o estado da zona no MQTT
                                 state_topic = f"cardio2e/zone/state/{zone_id}"
-                                mqtt_client.publish(state_topic, zone_state, retain=True)
+                                mqtt_client.publish(state_topic, zone_state, retain=False)
                                 #_LOGGER.debug("Estado da zona %d publicado no MQTT: %s", zone_id, zone_state)
                         # Caso o bypass das zonas seja atualizado
                         elif message_parts[1] == "B":
@@ -340,11 +430,13 @@ def listen_for_updates(serial_conn, mqtt_client):
 
                                 # Publica o estado da zona no MQTT
                                 state_topic = f"cardio2e/zone/bypass/state/{zone_id}"
-                                mqtt_client.publish(state_topic, bypass_state, retain=True)
+                                mqtt_client.publish(state_topic, bypass_state, retain=False)
                                 #_LOGGER.debug("Estado da zona %d publicado no MQTT: %s", zone_id, bypass_state)
+                    else:
+                        _LOGGER.error("Response not processed: %s", message_parts)
 
         except Exception as e:
-            _LOGGER.error("Erro ao ler do RS-232: %s", e)
+            _LOGGER.error("Error reading from RS-232: %s", e)
 
 def initialize_entity_states(serial_conn, mqtt_client, num_entities, entity_type="L", interval=0.1):
     """
@@ -355,9 +447,9 @@ def initialize_entity_states(serial_conn, mqtt_client, num_entities, entity_type
     :param entity_type: Tipo da entidade ("L" para luz, "Z" para zona).
     :param interval: Intervalo de tempo entre cada consulta (usado apenas para luzes).
     """
-    _LOGGER.info("Inicializando estados de todas as entidades do tipo %s...", "Luzes" if entity_type == "L" else "Zonas")
+    _LOGGER.info("Initializing entity state from type %s...", entity_type)
 
-    if entity_type == "L" or entity_type == "R":
+    if entity_type == "L" or entity_type == "R" or entity_type == "C":
         # for lights or switches, get sequencial one by one 
         for entity_id in range(1, num_entities + 1):
             get_entity_state(serial_conn, mqtt_client, entity_id, entity_type)
@@ -367,7 +459,7 @@ def initialize_entity_states(serial_conn, mqtt_client, num_entities, entity_type
         get_entity_state(serial_conn, mqtt_client, 1, entity_type, num_zones=num_entities)
         get_entity_state(serial_conn, mqtt_client, 1, "B", num_zones=num_entities)
 
-    _LOGGER.info("Estados de todas as entidades do tipo %s foram inicializados.", "Luzes" if entity_type == "L" else "Zonas")
+    _LOGGER.info("States of all entities of type %s have been initialized", entity_type)
 
 def get_name(serial_conn, entity_id, entity_type, mqtt_client, max_retries=3, timeout=3.0):
     """
@@ -387,7 +479,7 @@ def get_name(serial_conn, entity_id, entity_type, mqtt_client, max_retries=3, ti
         try:
             # Envia o comando para obter o nome da entidade
             serial_conn.write(command.encode())
-            _LOGGER.debug("Enviado comando para obter nome da entidade %s %d: %s", entity_type, entity_id, command.strip())
+            _LOGGER.debug("Command sent to get entity name %s %d: %s", entity_type, entity_id, command.strip())
 
             start_time = time.time()
             received_message = ""
@@ -398,7 +490,7 @@ def get_name(serial_conn, entity_id, entity_type, mqtt_client, max_retries=3, ti
 
                 # Processa somente se a mensagem começar com o prefixo esperado para o nome
                 if received_message.startswith(f"@I N {entity_type}"):
-                    _LOGGER.debug("Mensagem completa recebida para nome da entidade %s %d: %s", entity_type, entity_id, received_message)
+                    _LOGGER.debug("Complete message received for entity name %s %d: %s", entity_type, entity_id, received_message)
 
                     # Captura o nome após "@I N {entity_type}" até o próximo @ ou o final da linha
                     name_part = received_message.split(f"@I N {entity_type}", 1)[-1].strip()
@@ -409,10 +501,12 @@ def get_name(serial_conn, entity_id, entity_type, mqtt_client, max_retries=3, ti
                         mqtt_topic = f"cardio2e/light/name/{entity_id}"
                     elif entity_type == 'R':
                         mqtt_topic = f"cardio2e/switch/name/{entity_id}"
+                    elif entity_type == 'C':
+                        mqtt_topic = f"cardio2e/cover/name/{entity_id}"
                     elif entity_type == 'Z':
                         mqtt_topic = f"cardio2e/zone/name/{entity_id}"
                     mqtt_client.publish(mqtt_topic, entity_name, retain=True)
-                    _LOGGER.info("Nome da entidade %s %d publicado no MQTT: %s", entity_type, entity_id, entity_name)
+                    _LOGGER.info("Entity name %s %d published to MQTT: %s", entity_type, entity_id, entity_name)
 
                     # Publica a configuração de autodiscovery para o Home Assistant, apenas para luzes
                     publish_autodiscovery_config(mqtt_client, entity_id, entity_name, entity_type)
@@ -420,19 +514,107 @@ def get_name(serial_conn, entity_id, entity_type, mqtt_client, max_retries=3, ti
                     return entity_name
                 else:
                     # Ignora mensagens irrelevantes
-                    _LOGGER.debug("Mensagem ignorada durante busca de nome: %s", received_message)
+                    _LOGGER.debug("Message ignored during name search: %s", received_message)
 
             attempts += 1
-            _LOGGER.debug("Tentativa %d falhou para obter o nome da entidade %s %d. Tentando novamente.", attempts + 1, entity_type, entity_id)
+            _LOGGER.debug("Attempt %d failed to get the name of entity %s %d. Trying again.", attempts + 1, entity_type, entity_id)
 
         except Exception as e:
-            _LOGGER.error("Erro ao obter nome da entidade %s %d: %s", entity_type, entity_id, e)
+            _LOGGER.error("Error getting entity name %s %d: %s", entity_type, entity_id, e)
             attempts += 1
 
     # Retorna um nome padrão se todas as tentativas falharem
-    default_name = f"{'Light' if entity_type == 'L' else 'Zone'}_{entity_id}"
-    _LOGGER.warning("Não foi possível obter o nome da entidade %s %d após %d tentativas. Usando nome padrão: %s", entity_type, entity_id, max_retries, default_name)
+    default_name = "Unkown"
+    _LOGGER.warning("Could not get entity name %s %d after %d attempts. Using default name: %s", entity_type, entity_id, max_retries, default_name)
     return default_name
+
+def parse_login_response(response, mqtt_client):
+    """
+    Processa a resposta recebida durante o login e publica informações no MQTT.
+    :param response: Resposta completa recebida após o login.
+    :param mqtt_client: Cliente MQTT para publicação.
+    """
+    # Divide a resposta em mensagens individuais usando o delimitador '\r'
+    messages = response.split("\r")
+
+    for message in messages:
+        if message.startswith("@I V"):
+            # Informação de versão do sistema
+            _LOGGER.info("System Version Info: %s", message)
+            version_info = message.split()
+            for i in range(2, len(version_info), 2):  # Par chave/valor
+                if version_info[i] == "C":
+                    mqtt_client.publish("cardio2e/version/controller", version_info[i + 1], retain=True)
+                elif version_info[i] == "M":
+                    mqtt_client.publish("cardio2e/version/module", version_info[i + 1], retain=True)
+                elif version_info[i] == "P":
+                    mqtt_client.publish("cardio2e/version/protocol", version_info[i + 1], retain=True)
+                elif version_info[i] == "S":
+                    mqtt_client.publish("cardio2e/version/serial", version_info[i + 1], retain=True)
+
+        elif message.startswith("@I L"):
+            # Estado das luzes
+            match = re.match(r"@I L (\d+) (\d+)", message)
+            if match:
+                light_id, light_state = match.groups()
+                light_state_topic = f"cardio2e/light/state/{light_id}"
+                light_state_value = "ON" if int(light_state) > 0 else "OFF"
+                mqtt_client.publish(light_state_topic, light_state_value, retain=True)
+                _LOGGER.info("Light %s state published to MQTT: %s", light_id, light_state_value)
+
+        elif message.startswith("@I R"):
+            # Estado dos interruptores
+            match = re.match(r"@I R (\d+) ([OC])", message)
+            if match:
+                switch_id, switch_state = match.groups()
+                switch_state_topic = f"cardio2e/switch/state/{switch_id}"
+                switch_state_value = "ON" if switch_state == "O" else "OFF"
+                mqtt_client.publish(switch_state_topic, switch_state_value, retain=True)
+                _LOGGER.info("Switch %s state published to MQTT: %s", switch_id, switch_state_value)
+
+        elif message.startswith("@I H"):
+            # Estado dos sensores de aquecimento
+            match = re.match(r"@I H (\d+) (\d+\.\d+) (\d+\.\d+) S ([OH])", message)
+            if match:
+                heater_id, temp_current, temp_setpoint, status = match.groups()
+                heater_topic = f"cardio2e/heater/{heater_id}"
+                heater_state = "ON" if status == "O" else "OFF"
+                mqtt_client.publish(f"{heater_topic}/current_temp", temp_current, retain=True)
+                mqtt_client.publish(f"{heater_topic}/setpoint_temp", temp_setpoint, retain=True)
+                mqtt_client.publish(f"{heater_topic}/status", heater_state, retain=True)
+                _LOGGER.info("Heater %s state published to MQTT: Current: %s, Setpoint: %s, Status: %s", heater_id, temp_current, temp_setpoint, heater_state)
+
+        elif message.startswith("@I T"):
+            # Estado dos sensores de temperatura
+            match = re.match(r"@I T (\d+) (\d+\.\d+) ([OH])", message)
+            if match:
+                temp_sensor_id, temp_value, temp_status = match.groups()
+                temp_status_value = "ON" if temp_status == "O" else "OFF"
+                mqtt_client.publish(f"cardio2e/temperature/{temp_sensor_id}", temp_value, retain=True)
+                mqtt_client.publish(f"cardio2e/temperature/{temp_sensor_id}/status", temp_status_value, retain=True)
+                _LOGGER.info("Temperature sensor %s state published to MQTT: %s °C, Status: %s", temp_sensor_id, temp_value, temp_status_value)
+
+        elif message.startswith("@I Z"):
+            # Estado das zonas, onde cada caractere representa o estado de uma zona específica
+            match = re.match(r"@I Z \d+ ([CO]+)", message)
+            if match:
+                zone_states = match.group(1)
+                for i, state_char in enumerate(zone_states, start=1):
+                    zone_state = cardio2e_zones.interpret_zone_character(state_char, i, CARDIO2E_ZONES_NORMAL_AS_OFF)
+                    mqtt_client.publish(f"cardio2e/zone/state/{i}", zone_state, retain=True)
+                    _LOGGER.info("Zone %d state published to MQTT: %s", i, zone_state)
+
+        elif message.startswith("@I B"):
+            # Estado das zonas de bypass, onde cada caractere representa o estado de uma zona específica
+            match = re.match(r"@I B \d+ ([NO]+)", message)
+            if match:
+                bypass_states = match.group(1)
+                for i, bypass_state_char in enumerate(bypass_states, start=1):
+                    bypass_state = cardio2e_zones.interpret_bypass_character(bypass_state_char)
+                    mqtt_client.publish(f"cardio2e/zone/bypass/state/{i}", bypass_state, retain=True)
+                    _LOGGER.info("Bypass state for zone %d published to MQTT: %s", i, bypass_state)
+
+    _LOGGER.info("Parsing completo da resposta de login.")
 
 def get_entity_state(serial_conn, mqtt_client, entity_id, entity_type="L", num_zones=16, timeout=0.5, max_retries=5):
     """
@@ -481,10 +663,10 @@ def get_entity_state(serial_conn, mqtt_client, entity_id, entity_type="L", num_z
                     state = int(state_message)
                     light_state = "ON" if state > 0 else "OFF"
                     mqtt_client.publish(state_topic, light_state, retain=True)
-                    _LOGGER.info("Estado da luz %d publicado no MQTT: %s", entity_id, light_state)
+                    _LOGGER.info("Status of light %d published to MQTT: %s", entity_id, light_state)
                     return light_state
 
-                if entity_type == "R" and len(message_parts) >= 4:
+                elif entity_type == "R" and len(message_parts) >= 4:
                     # for switches, process one 
                     state_message = message_parts[3]
                     state_topic = f"cardio2e/switch/state/{entity_id}"
@@ -492,6 +674,15 @@ def get_entity_state(serial_conn, mqtt_client, entity_id, entity_type="L", num_z
                     switch_state = "ON" if state == "O" else "OFF"
                     mqtt_client.publish(state_topic, switch_state, retain=True)
                     _LOGGER.info("Switch %d state publish on MQTT: %s", entity_id, switch_state)
+                    return state
+
+                elif entity_type == "C" and len(message_parts) >= 4:
+                    # for switches, process one 
+                    state_message = message_parts[3]
+                    state_topic = f"cardio2e/cover/state/{entity_id}"
+                    state = state_message
+                    mqtt_client.publish(state_topic, state, retain=True)
+                    _LOGGER.info("Cover %d state publish on MQTT: %s", entity_id, state)
                     return state
 
                 elif entity_type == "Z" and len(message_parts) >= 4:
@@ -502,7 +693,7 @@ def get_entity_state(serial_conn, mqtt_client, entity_id, entity_type="L", num_z
                         zone_state = cardio2e_zones.interpret_zone_character(zone_state_char, zone_id, CARDIO2E_ZONES_NORMAL_AS_OFF)
                         state_topic = f"cardio2e/zone/state/{zone_id}"
                         mqtt_client.publish(state_topic, zone_state, retain=True)
-                        _LOGGER.info("Estado da zona %d publicado no MQTT: %s", zone_id, zone_state)
+                        _LOGGER.info("Status of zone %d published to MQTT: %s", zone_id, zone_state)
                     return zone_states  # Retorna a sequência de estados para referência
 
                 elif entity_type == "B" and len(message_parts) >= 4:
@@ -513,22 +704,86 @@ def get_entity_state(serial_conn, mqtt_client, entity_id, entity_type="L", num_z
                         bypass_state = cardio2e_zones.interpret_bypass_character(bypass_state_char)
                         bypass_topic = f"cardio2e/zone/bypass/state/{zone_id}"
                         mqtt_client.publish(bypass_topic, bypass_state, retain=True)
-                        _LOGGER.info("Estado do bypass da zona %d publicado no MQTT: %s", zone_id, bypass_state)
+                        _LOGGER.info("Bypass status for zone %d published to MQTT: %s", zone_id, bypass_state)
                     return bypass_state
 
                 else:
-                    _LOGGER.warning("Formato inesperado para a resposta de estado da entidade %s %d: %s", entity_type, entity_id, received_message)
+                    _LOGGER.warning("Unexpected format for entity status response %s %d: %s", entity_type, entity_id, received_message)
 
-            _LOGGER.warning("Resposta incorreta para a entidade %s %d, tentativa %d de %d.", entity_type, entity_id, attempts + 1, max_retries)
+            _LOGGER.warning("Incorrect answer for entity %s %d, attempt %d by %d.", entity_type, entity_id, attempts + 1, max_retries)
             attempts += 1
             time.sleep(0.1)
 
         except Exception as e:
-            _LOGGER.error("Erro ao obter estado da entidade %s %d: %s", entity_type, entity_id, e)
+            _LOGGER.error("Error getting state of entity %s %d: %s", entity_type, entity_id, e)
             attempts += 1
 
-    _LOGGER.warning("Não foi possível obter o estado da entidade %s %d após %d tentativas.", entity_type, entity_id, max_retries)
+    _LOGGER.warning("Could not get state for entity %s %d after %d attempts.", entity_type, entity_id, max_retries)
     return None
+
+def cardio_login(serial_conn, mqtt_client, state="login", password="000000", max_retries=5, timeout=3.0):
+    """
+    Realiza o login ou logout via RS-232 enviando o comando correspondente.
+    :param serial_conn: Conexão serial RS-232.
+    :param mqtt_client: Cliente MQTT para publicação de dados após login.
+    :param password: Senha de login a ser enviada (apenas para login).
+    :param state: Estado da operação, "login" para entrar e "logout" para sair.
+    :param max_retries: Número máximo de tentativas.
+    :param timeout: Tempo limite para resposta de cada tentativa.
+    :return: True se o login/logout foi bem-sucedido, False caso contrário.
+    """
+    if state == "login":
+        command = f"@S P I {password}\n\r"
+        success_response_prefix = "@A P"
+    elif state == "logout":
+        command = "@S P O\n\r"
+        success_response_prefix = "@A O"
+    else:
+        _LOGGER.error("Invalid state: %s. Use 'login' or 'logout'.", state)
+        return False
+
+    attempts = 0
+
+    while attempts < max_retries:
+        try:
+            # Envia o comando de login ou logout
+            serial_conn.write(command.encode())
+            _LOGGER.debug("%s command sent: %s", state.capitalize(), command.strip())
+
+            # Se for logout, retorne imediatamente sem tentar ler a resposta
+            if state == "logout":
+                _LOGGER.info("Logout command sent; no response required.")
+                return True
+
+            start_time = time.time()
+            received_message = ""
+
+            # Aguardar resposta de sucesso dentro do tempo limite
+            while time.time() - start_time < timeout:
+                received_message = serial_conn.readline().decode(errors="ignore").strip()
+
+                # Verifica se a resposta indica sucesso
+                if received_message.startswith(success_response_prefix):
+                    _LOGGER.info("%s successful with response: %s", state.capitalize(), received_message)
+                    
+                    # Chama o parse_login_response apenas se for um login
+                    if state == "login":
+                        parse_login_response(received_message, mqtt_client)
+                    
+                    return True
+                else:
+                    _LOGGER.warning("%s failed with response: %s", state.capitalize(), received_message)
+                    break  # Falha, então sai do loop interno
+
+            attempts += 1
+            _LOGGER.debug("Attempt %d failed for cardio2e %s. Trying again.", attempts + 1, state)
+
+        except Exception as e:
+            _LOGGER.error("Error during cardio2e %s attempt %d: %s", state, attempts + 1, e)
+            attempts += 1
+
+    _LOGGER.warning("Cardio2e %s failed after %d attempts.", state, max_retries)
+    return False
 
 def publish_autodiscovery_config(mqtt_client, entity_id, entity_name, entity_type="L"):
     """
@@ -577,7 +832,7 @@ def publish_autodiscovery_config(mqtt_client, entity_id, entity_name, entity_typ
 
         # Publicar a configuração de autodiscovery para a luz
         mqtt_client.publish(config_topic, json.dumps(config_payload), retain=True)
-        _LOGGER.info("Publicado config de autodiscovery para luz: %s", entity_name)
+        _LOGGER.info("Published autodiscovery config for light: %s", entity_name)
 
     elif entity_type == "R":
         # Configuração de autodiscovery para switches (para controle de bypass da zona)
@@ -604,7 +859,35 @@ def publish_autodiscovery_config(mqtt_client, entity_id, entity_name, entity_typ
 
         # Publicar a configuração de autodiscovery para o sensor da zona
         mqtt_client.publish(switch_config_topic, json.dumps(switch_config_payload), retain=True)
-        _LOGGER.info("Publish autodiscovery for cardio2e switches (relays): %s", entity_name)
+        _LOGGER.info("Publish autodiscovery config for switches (relays): %s", entity_name)
+
+    elif entity_type == "C":
+        # Configuração de autodiscovery para estores (cover)
+        cover_config_topic = f"homeassistant/cover/cardio2e_cover_{entity_id}/config"
+        position_topic = f"cardio2e/cover/state/{entity_id}"
+        set_position_topic = f"cardio2e/cover/set/{entity_id}"
+
+        cover_config_payload = {
+            "name": f"{entity_name}",
+            "unique_id": f"cardio2e_cover_{entity_id}",
+            "position_topic": position_topic,       # Mesma posição do estado para compatibilidade
+            "set_position_topic": set_position_topic, # Tópico para definir a posição
+            "payload_open": "100",
+            "payload_closed": "0",
+            "optimistic": False,
+            "qos": 1,
+            "retain": False,
+            "device": {
+                "identifiers": ["Cardio2e Covers"],
+                "name": "Cardio2e Covers",
+                "model": "Cardio2e",
+                "manufacturer": "Cardio2e Manufacturer"
+            }
+        }
+
+        # Publicar a configuração de autodiscovery para o estore
+        mqtt_client.publish(cover_config_topic, json.dumps(cover_config_payload), retain=True)
+        _LOGGER.info("Publish autodiscovery config for cover: %s", entity_name)
 
     elif entity_type == "Z":
         # Configuração de autodiscovery para sensores binários (zonas)
@@ -630,7 +913,7 @@ def publish_autodiscovery_config(mqtt_client, entity_id, entity_name, entity_typ
 
         # Publicar a configuração de autodiscovery para o sensor da zona
         mqtt_client.publish(sensor_config_topic, json.dumps(sensor_config_payload), retain=True)
-        _LOGGER.info("Publicado config de autodiscovery para sensor binário (zona): %s", entity_name)
+        _LOGGER.info("Published autodiscovery config for binary sensor (zone): %s", entity_name)
 
         # Configuração de autodiscovery para o switch de bypass (ativação/desativação)
         switch_config_topic = f"homeassistant/switch/cardio2e_zone_{entity_id}_bypass/config"
@@ -656,7 +939,7 @@ def publish_autodiscovery_config(mqtt_client, entity_id, entity_name, entity_typ
 
         # Publicar a configuração de autodiscovery para o switch de bypass
         mqtt_client.publish(switch_config_topic, json.dumps(switch_config_payload), retain=True)
-        _LOGGER.info("Publicado config de autodiscovery para switch de bypass da zona: %s", entity_name)
+        _LOGGER.info("Published autodiscovery config for zone bypass switch: %s", entity_name)
 
 if __name__ == "__main__":
     main()
