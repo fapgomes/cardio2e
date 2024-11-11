@@ -10,6 +10,7 @@ import configparser
 import ast
 import signal
 import re
+import datetime
 
 from cardio2e_modules import cardio2e_zones
 
@@ -46,6 +47,7 @@ for entity, params in entities_config.items():
 ########
 ## EXTRA VARS
 ########
+CARDIO2E_UPDATE_DATE_INTERVAL = int(config['cardio2e'].get('update_date_interval', 3600))
 # Processa o valor de dimmer_lights a partir do arquivo de configuração
 dimmer_lights_raw = config['cardio2e'].get('dimmer_lights', '[]')  # Use '[]' como padrão se não estiver no config
 try:
@@ -360,9 +362,9 @@ def send_rs232_command(serial_conn, entity_type, entity_id, state=None, heating_
     else:
         # Comando para luzes e bypass de zonas
         if state is None:
-            _LOGGER.error("Missing state parameter for light or zone bypass command.")
-            return
-        command = f"@S {entity_type} {entity_id} {state}{CARDIO2E_TERMINATOR}"
+            command = f"@S {entity_type} {entity_id}{CARDIO2E_TERMINATOR}"
+        else:
+            command = f"@S {entity_type} {entity_id} {state}{CARDIO2E_TERMINATOR}"
 
     try:
         _LOGGER.info("Sending command to RS-232: %s", command)
@@ -373,11 +375,21 @@ def send_rs232_command(serial_conn, entity_type, entity_id, state=None, heating_
 # listen for cardio2e updates
 def listen_for_updates(serial_conn, mqtt_client):
     """Escuta as atualizações na porta RS-232 e publica o estado e o brilho no MQTT."""
+    last_time_sent = None  # Variável para armazenar o último horário de envio
+
     while True:
         if not serial_conn.is_open:
             _LOGGER.debug("The serial connection was closed.")
             break
         try:
+            # Envia o comando de tempo a cada hora
+            current_time = datetime.datetime.now()
+            if last_time_sent is None or (current_time - last_time_sent).seconds >= CARDIO2E_UPDATE_DATE_INTERVAL:
+                time_command = current_time.strftime("%Y%m%d%H%M%S")
+                send_rs232_command(serial_conn, "D", time_command)
+                _LOGGER.info("Sent time command to cardio2e: %s", time_command)
+                last_time_sent = current_time
+
             # Ler a linha recebida do RS-232
             received_message = serial_conn.readline().decode().strip()
             if received_message:
@@ -404,7 +416,10 @@ def listen_for_updates(serial_conn, mqtt_client):
                     message_parts = msg.split()
 
                     # Caso o comando seja enviado pelo Home Assistant
-                    if len(message_parts) == 3 and message_parts[0] == "@A":
+                    if len(message_parts) == 2 and message_parts[0] == "@A":
+                        if message_parts[1] == "D":
+                            _LOGGER.info("Cardio date update sucessully.")
+                    elif len(message_parts) == 3 and message_parts[0] == "@A":
                         if message_parts[1] == "L":
                             # Comando para controle de luz "@A L <light_id>"
                             light_id = int(message_parts[2])

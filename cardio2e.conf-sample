@@ -8,6 +8,8 @@ baudrate = 9600
 
 # password for cardio2e (default: 000000)
 password = 000000
+# update cardio2e date interval
+update_date_interval = 3600
 
 # lights config
 fetch_light_names = true  # on startup will fetch the current name of lights. After the first time can be disabled.
