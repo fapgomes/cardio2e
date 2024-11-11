@@ -32,6 +32,10 @@ fetch_names_hvac = true # on startup will fetch the current name of zones. After
 skip_init_state_hvac = true  # on startup will fetch the current state of temperature (on login I already have the state)
 nhvac = 5  # number of temperature zones in you system
 
+# security config
+fetch_security_names = true  # on startup will fetch the current name of security zones. After the first time can be disabled.
+code = 000000 # (security code for arm / disarm alarm)
+
 # zones config
 fetch_zone_names = true # on startup will fetch the current name of zones. After the first time can be disabled.
 skip_init_zone_state = true  # on startup will fetch the current state of zones (on login I already have the state)

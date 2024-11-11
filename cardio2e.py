@@ -35,6 +35,7 @@ entities_config = {
     "SWITCHES": {"fetch_names": "fetch_switch_names", "skip_init_state": "skip_init_switch_state", "count": "nswitches", "default_count": 16},
     "COVERS": {"fetch_names": "fetch_cover_names", "skip_init_state": "skip_init_cover_state", "count": "ncovers", "default_count": 20},
     "HVAC": {"fetch_names": "fetch_names_hvac", "skip_init_state": "skip_init_state_hvac", "count": "nhvac", "default_count": 5},
+    "SECURITY": {"fetch_names": "fetch_security_names", "skip_init_state": "skip_init_security_state", "count": "nsecurity", "default_count": 1},
     "ZONES": {"fetch_names": "fetch_zone_names", "skip_init_state": "skip_init_zone_state", "count": "nzones", "default_count": 16},
 }
 
@@ -48,6 +49,7 @@ for entity, params in entities_config.items():
 ## EXTRA VARS
 ########
 CARDIO2E_UPDATE_DATE_INTERVAL = int(config['cardio2e'].get('update_date_interval', 3600))
+CARDIO2E_ALARM_CODE = int(config['cardio2e'].get('code', 000000))
 # Processa o valor de dimmer_lights a partir do arquivo de configuração
 dimmer_lights_raw = config['cardio2e'].get('dimmer_lights', '[]')  # Use '[]' como padrão se não estiver no config
 try:
@@ -119,9 +121,10 @@ def main():
         initialize_entities("R", CARDIO2E_N_SWITCHES, CARDIO2E_FETCH_NAMES_SWITCHES, CARDIO2E_SKIP_INIT_STATE_SWITCHES, serial_conn, mqtt_client)
         initialize_entities("C", CARDIO2E_N_COVERS, CARDIO2E_FETCH_NAMES_COVERS, CARDIO2E_SKIP_INIT_STATE_COVERS, serial_conn, mqtt_client)
         initialize_entities("H", CARDIO2E_N_HVAC, CARDIO2E_FETCH_NAMES_HVAC, CARDIO2E_SKIP_INIT_STATE_HVAC, serial_conn, mqtt_client)
+        initialize_entities("S", 1, CARDIO2E_FETCH_NAMES_SECURITY, False, serial_conn, mqtt_client)
         initialize_entities("Z", CARDIO2E_N_ZONES, CARDIO2E_FETCH_NAMES_ZONES, CARDIO2E_SKIP_INIT_STATE_ZONES, serial_conn, mqtt_client)
 
-        _LOGGER.info("Cardio2e ready. Listening for events. ")
+        _LOGGER.info("\n################\nCardio2e ready. Listening for events.\n################")
         # Inicia a thread de escuta na porta serial
         listener_thread = threading.Thread(target=listen_for_updates, args=(serial_conn, mqtt_client), daemon=True)
         listener_thread.start()
@@ -141,8 +144,9 @@ def on_mqtt_connect(client, userdata, flags, rc):
     client.subscribe("cardio2e/light/set/#")
     client.subscribe("cardio2e/switch/set/#")
     client.subscribe("cardio2e/cover/set/#")
-    client.subscribe("cardio2e/zone/bypass/set/#")
     client.subscribe("cardio2e/hvac/+/set/#")  # Subscreve dinamicamente a qualquer hvac_id
+    client.subscribe("cardio2e/alarm/set/#")
+    client.subscribe("cardio2e/zone/bypass/set/#")
 
     _LOGGER.info("Subscribed to all necessary topics.")
 
@@ -300,6 +304,32 @@ def on_mqtt_message(client, userdata, msg):
         except Exception as e:
             _LOGGER.error("Error processing HVAC message: %s", e)
 
+    # Verify if a security message appears
+    elif topic.startswith("cardio2e/alarm/set/"):
+        try:
+            security_id = int(topic.split("/")[-1])
+        except ValueError:
+            _LOGGER.error("Security ID invalid on topic: %s", topic)
+            return
+
+        # Converte o payload para o comando apropriado para RS-232
+        if payload == "ARM_AWAY":
+            command = f"A {CARDIO2E_ALARM_CODE}" 
+        elif payload == "DISARM":
+            command = f"D {CARDIO2E_ALARM_CODE}"
+        else:
+            _LOGGER.error("Invalid Payload for security command: %s", payload)
+            return
+
+        # Envia comando convertido para o RS-232
+        send_rs232_command(userdata["serial_conn"], "S", security_id, command)
+
+        # Atualiza o tópico de estado com o valor convertido
+        state_topic = f"cardio2e/alarm/state/{security_id}"
+        security_state = "ARM_AWAY" if command == "A" else "DISARM"
+        client.publish(state_topic, security_state, retain=False)
+        _LOGGER.debug("Atualizando o tópico de estado para %s com valor %s", state_topic, security_state)
+
     # Checks if the message is for bypass control of a zone
     elif topic.startswith("cardio2e/zone/bypass/set/"):
         zone_bypass_states = ["N"] * CARDIO2E_N_ZONES  # 'N' significa ativo, 'Y' significa bypass
@@ -426,16 +456,48 @@ def listen_for_updates(serial_conn, mqtt_client):
                             # Consultar o estado atual e publicar no MQTT
                             get_entity_state(serial_conn, mqtt_client, light_id, "L")
                         elif message_parts[1] == "R":
-                            # Comando para controle de luz "@A R <relay_id>"
+                            # Comando para controle de luz "@A R <switch_id>"
                             switch_id = int(message_parts[2])
                             # Consultar o estado atual e publicar no MQTT
                             get_entity_state(serial_conn, mqtt_client, switch_id, "R")
                         elif message_parts[1] == "C":
-                            # Comando para controle de luz "@A R <relay_id>"
+                            # Comando para controle de luz "@A R <cover_id>"
                             cover_id = int(message_parts[2])
                             # Consultar o estado atual e publicar no MQTT
                             get_entity_state(serial_conn, mqtt_client, cover_id, "C")
-
+                        elif message_parts[1] == "S":
+                            # Comando para controle de luz "@A S <security_id>"
+                            security_id = int(message_parts[2])
+                            # Consultar o estado atual e publicar no MQTT
+                            get_entity_state(serial_conn, mqtt_client, security_id, "S")
+                    elif len(message_parts) >= 3 and message_parts[0] == "@N":
+                        error_msg = ""
+                        if (message_parts[3] == "1"):
+                            error_msg = "Object type specified by the transaction is not recognized."
+                        elif (message_parts[3] == "2"):
+                            error_msg = "Object number is out of range for the object type specified."
+                        elif (message_parts[3] == "3"):
+                            error_msg = "One or more parameters are not valid."
+                        elif (message_parts[3] == "4"):
+                            error_msg = "Security code is not valid."
+                        elif (message_parts[3] == "5"):
+                            error_msg = "Transaction S (Set) not supported for the requested type of object."
+                        elif (message_parts[3] == "6"):
+                            error_msg = "Transaction G (Get) not supported for the requested type of object."
+                        elif (message_parts[3] == "7"):
+                            error_msg = "Transaction is refused because security is armed."
+                        elif (message_parts[3] == "8"):
+                            error_msg = "This zone can be ignored."
+                        elif (message_parts[3] == "16"):
+                            error_msg = "Security can not be armed because there are open zones."
+                        elif (message_parts[3] == "17"):
+                            error_msg = "Security can not be armed because there is a power problem."
+                        elif (message_parts[3] == "18"):
+                            error_msg = "Security can not be armed for an unknown reason."
+                        else:
+                            error_msg = "Unkown error message."
+                        _LOGGER.info("\n#######\nNACK from cardio with transaction %s: %s", msg, error_msg)
+                        
                     elif len(message_parts) >= 4 and message_parts[0] == "@I":
                         # Caso o estado da luz tenha sido alterado manualmente ou externamente
                         if message_parts[1] == "L":
@@ -516,7 +578,15 @@ def listen_for_updates(serial_conn, mqtt_client):
                             # Publica o modo de operação
                             mqtt_client.publish(f"{base_topic}/mode", mode_state, retain=False)
                             _LOGGER.info("HVAC %d mode updated to: %s", hvac_id, mode_state)
-                        # Caso o estado das zonas seja atualizado
+                        # Caso o estado do alarme seja atualizado
+                        elif message_parts[1] == "S":
+                            # Estado atualizado "@I S <security_id> <state>"
+                            security_id = int(message_parts[2])
+                            security_state = "ARM_AWAY" if message_parts[3] == "A" else "DISARM"
+
+                            state_topic = f"cardio2e/alarm/state/{security_id}"
+                            mqtt_client.publish(state_topic, security_state, retain=False)
+                            _LOGGER.info("Security %d state, updated to: %s", security_id, security_state)
                         elif message_parts[1] == "Z":
                             # Mensagem de estado das zonas, por exemplo: "@I Z 1 CCCCCCCCCCOOOOCC"
                             zone_states = message_parts[3]
@@ -553,7 +623,7 @@ def listen_for_updates(serial_conn, mqtt_client):
 def initialize_entities(entity_type, num_entities, fetch_names_flag, skip_init_state_flag, serial_conn, mqtt_client):
     """
     Inicializa entidades e publica seus nomes e estados no MQTT.
-    :param entity_type: Entity Type ("L" for light, "R" for switch, "C" for covers, H for HVAC, "Z" for zone, etc.)
+    :param entity_type: Entity Type ("L" for light, "R" for switch, "C" for covers, "S" for security, "H" for HVAC, "Z" for zone, etc.)
     :param num_entities: Número de entidades desse tipo.
     :param fetch_names_flag: Flag para buscar e publicar os nomes das entidades no MQTT.
     :param skip_init_state_flag: Flag para pular a inicialização dos estados das entidades no MQTT.
@@ -584,7 +654,7 @@ def initialize_entity_states(serial_conn, mqtt_client, num_entities, entity_type
     """
     _LOGGER.info("Initializing entity state from type %s...", entity_type)
 
-    if entity_type == "L" or entity_type == "R" or entity_type == "C" or entity_type == "H":
+    if entity_type == "L" or entity_type == "R" or entity_type == "C" or entity_type == "S" or entity_type == "H":
         # for lights or switches, get sequencial one by one 
         for entity_id in range(1, num_entities + 1):
             get_entity_state(serial_conn, mqtt_client, entity_id, entity_type)
@@ -598,15 +668,24 @@ def initialize_entity_states(serial_conn, mqtt_client, num_entities, entity_type
 
 def get_name(serial_conn, entity_id, entity_type, mqtt_client, max_retries=3, timeout=3.0):
     """
-    Consulta o nome de uma luz ou zona via RS-232, processa a resposta e publica no MQTT.
+    Consulta o nome de uma luz, zona ou outra entidade via RS-232, processa a resposta e publica no MQTT.
     :param serial_conn: Conexão serial RS-232.
     :param entity_id: Identificador da entidade (luz ou zona).
-    :param entity_type: Entity Type ("L" for light, "R" for switch, "C" for cover, "H" for HVAC, "Z" for zone).
+    :param entity_type: Tipo da entidade ("L" para light, "R" para switch, "C" para cover, "H" para HVAC, "Z" para zone, "S" para security).
     :param mqtt_client: Cliente MQTT para publicação.
     :param max_retries: Número máximo de tentativas.
     :param timeout: Tempo limite para resposta.
     :return: Nome da entidade.
     """
+    
+    # If entity_type is security ("S"), skip the name consult and publish only the autodiscovery config
+    if entity_type == "S":
+        entity_name = f"Security {entity_id}"  # Nome padrão para a entidade de segurança
+        publish_autodiscovery_config(mqtt_client, entity_id, entity_name, entity_type)
+        _LOGGER.info("Published autodiscovery config for security entity %s %d without fetching name.", entity_type, entity_id)
+        return entity_name
+
+    # Caso contrário, continua com a lógica normal para buscar o nome
     command = f"@G N {entity_type} {entity_id}{CARDIO2E_TERMINATOR}"
     attempts = 0
 
@@ -631,7 +710,7 @@ def get_name(serial_conn, entity_id, entity_type, mqtt_client, max_retries=3, ti
                     name_part = received_message.split(f"@I N {entity_type}", 1)[-1].strip()
                     entity_name = name_part.split("@")[0].strip()  # Ignora qualquer outra mensagem após o nome
 
-                    # Publish the name on the MQTT broker
+                    # Publica o nome no broker MQTT
                     if entity_type == 'L':
                         mqtt_topic = f"cardio2e/light/name/{entity_id}"
                     elif entity_type == 'R':
@@ -645,12 +724,12 @@ def get_name(serial_conn, entity_id, entity_type, mqtt_client, max_retries=3, ti
                     mqtt_client.publish(mqtt_topic, entity_name, retain=True)
                     _LOGGER.info("Entity name %s %d published to MQTT: %s", entity_type, entity_id, entity_name)
 
-                    # Publica a configuração de autodiscovery para o Home Assistant, apenas para luzes
+                    # Publica a configuração de autodiscovery para o Home Assistant
                     publish_autodiscovery_config(mqtt_client, entity_id, entity_name, entity_type)
 
                     return entity_name
                 else:
-                    # Ignore irrelevant messages
+                    # Ignora mensagens irrelevantes
                     _LOGGER.debug("Message ignored during name search: %s", received_message)
 
             attempts += 1
@@ -661,7 +740,7 @@ def get_name(serial_conn, entity_id, entity_type, mqtt_client, max_retries=3, ti
             attempts += 1
 
     # Retorna um nome padrão se todas as tentativas falharem
-    default_name = "Unkown"
+    default_name = "Unknown"
     _LOGGER.warning("Could not get entity name %s %d after %d attempts. Using default name: %s", entity_type, entity_id, max_retries, default_name)
     return default_name
 
@@ -675,6 +754,7 @@ def parse_login_response(response, mqtt_client):
     messages = response.split("\r")
 
     for message in messages:
+        _LOGGER.debug("Message parsed in login response: %s", message)
         if message.startswith("@I V"):
             # Informação de versão do sistema
             _LOGGER.info("System Version Info: %s", message)
@@ -753,6 +833,21 @@ def parse_login_response(response, mqtt_client):
                 mqtt_client.publish(f"cardio2e/hvac/{temp_sensor_id}/state/current_temperature", temp_value, retain=True)
                 mqtt_client.publish(f"cardio2e/hvac/{temp_sensor_id}/state/alternative_status_from_temp", temp_status_value, retain=True)
                 _LOGGER.info("Temperature sensor %s state published to MQTT: %s °C, Status: %s", temp_sensor_id, temp_value, temp_status_value)
+
+        elif message.startswith("@I S"):
+            # alarm state
+            match = re.match(r"@I S 1 ([AD])", message)
+            if match:
+                security_state = match.group(1)
+                security_state_topic = f"cardio2e/alarm/state/1"
+                if security_state == "A":
+                    security_state_value = "ARM_AWAY" 
+                elif security_state == "D":
+                    security_state_value = "DISARM" 
+                else:
+                    security_state_value = "unkown"
+                mqtt_client.publish(security_state_topic, security_state_value, retain=True)
+                _LOGGER.info("Security state published to MQTT: %s - %s", security_state_value, security_state)
 
         elif message.startswith("@I Z"):
             # Estado das zonas, onde cada caractere representa o estado de uma zona específica
@@ -877,6 +972,21 @@ def get_entity_state(serial_conn, mqtt_client, entity_id, entity_type="L", num_z
 
                     return True
 
+                elif entity_type == "S" and len(message_parts) >= 4:
+                    # for security, process one 
+                    state_message = message_parts[3]
+                    state_topic = f"cardio2e/alarm/state/{entity_id}"
+                    state = state_message
+                    if state_message == "A":
+                        state = "ARM_AWAY" 
+                    elif state_message == "D":
+                        state = "DISARM" 
+                    else:
+                        state = "unkown"
+                    mqtt_client.publish(state_topic, state, retain=True)
+                    _LOGGER.info("Security %d state publish on MQTT: %s", entity_id, state)
+                    return state
+
                 elif entity_type == "Z" and len(message_parts) >= 4:
                     # Para zonas, processa todos os estados das zonas de uma vez
                     zone_states = message_parts[3]
@@ -986,6 +1096,7 @@ def publish_autodiscovery_config(mqtt_client, entity_id, entity_name, entity_typ
     :param entity_name: Nome da entidade.
     :param entity_type: Tipo da entidade ("L" para luz, "Z" para zona).
     """
+    _LOGGER.debug("Publishing autodiscovery info for %s", entity_name)
     if entity_type == "L":
         # Configuração de autodiscovery para luzes
         config_topic = f"homeassistant/light/cardio2e_{entity_id}/config"
@@ -1135,6 +1246,36 @@ def publish_autodiscovery_config(mqtt_client, entity_id, entity_name, entity_typ
         # Publicar a configuração de autodiscovery para a entidade HVAC consolidada
         mqtt_client.publish(climate_config_topic, json.dumps(climate_config_payload), retain=True)
         _LOGGER.info("Published autodiscovery config for consolidated HVAC entity: %s", entity_name)
+
+    elif entity_type == "S":
+        # Configuração de autodiscovery para o painel de controle do alarme
+        alarm_config_topic = f"homeassistant/alarm_control_panel/cardio2e_alarm_{entity_id}/config"
+        command_topic = f"cardio2e/alarm/set/{entity_id}"
+        state_topic = f"cardio2e/alarm/state/{entity_id}"
+
+        alarm_config_payload = {
+            "name": f"{entity_name}",
+            "unique_id": f"cardio2e_alarm_{entity_id}",
+            "command_topic": command_topic,
+            "state_topic": state_topic,
+            #"payload_ARM_AWAY": "ARM",  # Usaremos "ARM" como comando genérico para armar
+            "payload_arm": "ARM_AWAY",  # Usaremos "ARM" como comando genérico para armar
+            "payload_disarm": "DISARM",  # Comando para desarmar
+            "code_arm_required": False,  # Define como True se o alarme exigir um código
+            "code_disarm_required": False,  # Define como True se o alarme exigir um código para desarmar
+            "qos": 1,
+            "retain": False,
+            "device": {
+                "identifiers": ["Cardio2e Alarm"],
+                "name": "Cardio2e Alarm",
+                "model": "Cardio2e",
+                "manufacturer": "Cardio2e Manufacturer"
+            }
+        }
+
+        # Publicar a configuração de autodiscovery para o alarme
+        mqtt_client.publish(alarm_config_topic, json.dumps(alarm_config_payload), retain=True)
+        _LOGGER.info("Published autodiscovery config for alarm: %s", entity_name)
 
     elif entity_type == "Z":
         # Configuração de autodiscovery para sensores binários (zonas)
