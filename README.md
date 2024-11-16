@@ -1,6 +1,6 @@
 # Overview
 
-This program can be used to integrate cardio2e to a mqtt server.
+This program can be used to integrate secant cardio2e to a mqtt server.
 
 # Installation
 Clone the repo
