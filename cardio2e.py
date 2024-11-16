@@ -12,7 +12,7 @@ import signal
 import re
 import datetime
 
-from cardio2e_modules import cardio2e_zones
+from cardio2e_modules import cardio2e_zones,cardio2e_errors
 
 config = configparser.ConfigParser()
 config.read('cardio2e.conf')
@@ -111,6 +111,9 @@ def main():
         handle_shutdown = create_shutdown_handler(serial_conn, mqtt_client)
         signal.signal(signal.SIGTERM, handle_shutdown)  # Sinal enviado pelo systemd ao parar o serviço
         signal.signal(signal.SIGINT, handle_shutdown)   # Sinal de interrupção (ex.: Ctrl+C)
+
+        # init the errors topic
+        cardio2e_errors.initialize_error_payload(mqtt_client)
 
         cardio_login(serial_conn, mqtt_client, state="login", password="000000")
 
@@ -313,9 +316,9 @@ def on_mqtt_message(client, userdata, msg):
             return
 
         # Converte o payload para o comando apropriado para RS-232
-        if payload == "ARM_AWAY":
+        if payload == "ARMED_AWAY":
             command = f"A {CARDIO2E_ALARM_CODE}" 
-        elif payload == "DISARM":
+        elif payload == "DISARMED":
             command = f"D {CARDIO2E_ALARM_CODE}"
         else:
             _LOGGER.error("Invalid Payload for security command: %s", payload)
@@ -326,8 +329,7 @@ def on_mqtt_message(client, userdata, msg):
 
         # Atualiza o tópico de estado com o valor convertido
         state_topic = f"cardio2e/alarm/state/{security_id}"
-        security_state = "ARM_AWAY" if command == "A" else "DISARM"
-        client.publish(state_topic, security_state, retain=False)
+        client.publish(state_topic, payload.lower(), retain=False)
         _LOGGER.debug("Atualizando o tópico de estado para %s com valor %s", state_topic, security_state)
 
     # Checks if the message is for bypass control of a zone
@@ -496,6 +498,7 @@ def listen_for_updates(serial_conn, mqtt_client):
                             error_msg = "Security can not be armed for an unknown reason."
                         else:
                             error_msg = "Unkown error message."
+                        cardio2e_errors.report_error_state(mqtt_client, error_msg)
                         _LOGGER.info("\n#######\nNACK from cardio with transaction %s: %s", msg, error_msg)
                         
                     elif len(message_parts) >= 4 and message_parts[0] == "@I":
@@ -582,11 +585,18 @@ def listen_for_updates(serial_conn, mqtt_client):
                         elif message_parts[1] == "S":
                             # Estado atualizado "@I S <security_id> <state>"
                             security_id = int(message_parts[2])
-                            security_state = "ARM_AWAY" if message_parts[3] == "A" else "DISARM"
+                            security_state = message_parts[3]
+
+                            if security_state == "A":
+                                security_state_value = "armed_away" 
+                            elif security_state == "D":
+                                security_state_value = "disarmed" 
+                            else:
+                                security_state_value = "unkown"
 
                             state_topic = f"cardio2e/alarm/state/{security_id}"
-                            mqtt_client.publish(state_topic, security_state, retain=False)
-                            _LOGGER.info("Security %d state, updated to: %s", security_id, security_state)
+                            mqtt_client.publish(state_topic, security_state_value, retain=False)
+                            _LOGGER.info("Security %d state, updated to: %s - %s", security_id, security_state, security_state_value)
                         elif message_parts[1] == "Z":
                             # Mensagem de estado das zonas, por exemplo: "@I Z 1 CCCCCCCCCCOOOOCC"
                             zone_states = message_parts[3]
@@ -841,9 +851,9 @@ def parse_login_response(response, mqtt_client):
                 security_state = match.group(1)
                 security_state_topic = f"cardio2e/alarm/state/1"
                 if security_state == "A":
-                    security_state_value = "ARM_AWAY" 
+                    security_state_value = "armed_away" 
                 elif security_state == "D":
-                    security_state_value = "DISARM" 
+                    security_state_value = "disarmed" 
                 else:
                     security_state_value = "unkown"
                 mqtt_client.publish(security_state_topic, security_state_value, retain=True)
@@ -978,9 +988,9 @@ def get_entity_state(serial_conn, mqtt_client, entity_id, entity_type="L", num_z
                     state_topic = f"cardio2e/alarm/state/{entity_id}"
                     state = state_message
                     if state_message == "A":
-                        state = "ARM_AWAY" 
+                        state = "armed_away" 
                     elif state_message == "D":
-                        state = "DISARM" 
+                        state = "disarmed" 
                     else:
                         state = "unkown"
                     mqtt_client.publish(state_topic, state, retain=True)
@@ -1258,11 +1268,12 @@ def publish_autodiscovery_config(mqtt_client, entity_id, entity_name, entity_typ
             "unique_id": f"cardio2e_alarm_{entity_id}",
             "command_topic": command_topic,
             "state_topic": state_topic,
-            #"payload_ARM_AWAY": "ARM",  # Usaremos "ARM" como comando genérico para armar
-            "payload_arm": "ARM_AWAY",  # Usaremos "ARM" como comando genérico para armar
-            "payload_disarm": "DISARM",  # Comando para desarmar
+            "payload_arm_away": "armed_away",
+            "payload_disarm": "disarmed",  # Comando para desarmar
             "code_arm_required": False,  # Define como True se o alarme exigir um código
             "code_disarm_required": False,  # Define como True se o alarme exigir um código para desarmar
+            #"code": "REMOTE_CODE",
+            "supported_features": ["arm_away", "arm_night"],
             "qos": 1,
             "retain": False,
             "device": {
