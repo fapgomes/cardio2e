@@ -1,3 +1,7 @@
+import logging
+
+_LOGGER = logging.getLogger(__name__)
+
 def interpret_zone_character(character, zone_id, zones_normal_as_off):
     """
     Interpreta um caractere de estado de uma zona, com inversão de estado para zonas específicas.

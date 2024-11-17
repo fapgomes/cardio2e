@@ -392,7 +392,6 @@ def send_rs232_command(serial_conn, entity_type, entity_id, state=None, heating_
         # Comando completo para o HVAC com todos os parâmetros
         command = f"@S H {entity_id} {heating_setpoint} {cooling_setpoint} {fan_state_code} {mode_code}{CARDIO2E_TERMINATOR}"
     else:
-        # Comando para luzes e bypass de zonas
         if state is None:
             command = f"@S {entity_type} {entity_id}{CARDIO2E_TERMINATOR}"
         else:
@@ -419,6 +418,10 @@ def listen_for_updates(serial_conn, mqtt_client):
             if last_time_sent is None or (current_time - last_time_sent).seconds >= CARDIO2E_UPDATE_DATE_INTERVAL:
                 time_command = current_time.strftime("%Y%m%d%H%M%S")
                 send_rs232_command(serial_conn, "D", time_command)
+                # get the temperature periodically
+                get_entity_state(serial_conn, mqtt_client, 1, "T")
+                # clean errors after some time
+                cardio2e_errors.report_error_state(mqtt_client, "No errors.")
                 _LOGGER.info("Sent time command to cardio2e: %s", time_command)
                 last_time_sent = current_time
 
@@ -948,6 +951,15 @@ def get_entity_state(serial_conn, mqtt_client, entity_id, entity_type="L", num_z
                     state = state_message
                     mqtt_client.publish(state_topic, state, retain=True)
                     _LOGGER.info("Cover %d state publish on MQTT: %s", entity_id, state)
+                    return state
+
+                elif entity_type == "T" and len(message_parts) >= 4:
+                    # for covers, process one 
+                    state_message = message_parts[3]
+                    state_topic = f"cardio2e/hvac/{entity_id}/state/current_temperature"
+                    state = state_message
+                    mqtt_client.publish(state_topic, state, retain=True)
+                    _LOGGER.info("Temperature %d state publish on MQTT: %s", entity_id, state)
                     return state
 
                 elif entity_type == "H" and len(message_parts) >= 7:
