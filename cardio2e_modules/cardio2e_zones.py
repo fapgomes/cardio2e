@@ -13,11 +13,12 @@ def interpret_zone_character(character, zone_id, zones_normal_as_off):
     # Determina se o estado deve ser invertido para a zona atual
     is_inverted = zone_id in zones_normal_as_off
 
+    _LOGGER.debug("Security %d state, updated to: %s", zone_id, character)
     if character == "O":
         return "OFF" if is_inverted else "ON"   # Inverte o estado se necessário
     elif character == "N":
         # Zonas especificadas como `zones_normal_as_off` invertem o estado normal
-        return "ON" if is_inverted else "OFF"
+        return "OFF" if is_inverted else "ON"
     elif character == "C":
         return "ON" if is_inverted else "OFF"  # Inverte o estado se necessário
     elif character == "E":

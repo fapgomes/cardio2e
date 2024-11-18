@@ -612,7 +612,9 @@ def listen_for_updates(serial_conn, mqtt_client):
                                 # Publica o estado da zona no MQTT
                                 state_topic = f"cardio2e/zone/state/{zone_id}"
                                 mqtt_client.publish(state_topic, zone_state, retain=False)
-                                #_LOGGER.debug("Estado da zona %d publicado no MQTT: %s", zone_id, zone_state)
+                                if zone_state == "ON":
+                                    _LOGGER.info("Estado da zona %d publicado no MQTT: %s", zone_id, zone_state)
+                                _LOGGER.debug("Estado da zona %d publicado no MQTT: %s", zone_id, zone_state)
                         # Caso o bypass das zonas seja atualizado
                         elif message_parts[1] == "B":
                             # Mensagem de estado das zonas, por exemplo: "@I B 1 NNNNNNNNNNNNNNNN"
