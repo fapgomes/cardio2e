@@ -21,7 +21,7 @@ def report_error_state(mqtt_client, error):
     }
 
     # Publicar o estado do erro
-    mqtt_client.publish(state_topic, json.dumps(error_state_payload), retain=False)
+    mqtt_client.publish(state_topic, json.dumps(error_state_payload), retain=True)
     _LOGGER.info("Published state for error: %s", error)
 
 def initialize_error_payload(mqtt_client):
@@ -41,7 +41,7 @@ def initialize_error_payload(mqtt_client):
         "state_topic": state_topic,
         "icon": "mdi:alert-circle-outline",
         "qos": 1,
-        "retain": False,
+        "retain": True,
         "value_template": "{{ value_json.error }}",
         "device": {
             "identifiers": ["Cardio2e System Errors"],
@@ -53,4 +53,4 @@ def initialize_error_payload(mqtt_client):
 
     # Publicar a configuração do sensor no Home Assistant
     mqtt_client.publish(sensor_config_topic, json.dumps(sensor_config_payload), retain=True)
-    _LOGGER.info("Published autodiscovery config for error sensor.")
+    eLOGGER.info("Published autodiscovery config for error sensor.")
