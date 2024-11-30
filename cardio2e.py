@@ -12,13 +12,23 @@ import signal
 import re
 import datetime
 
-from cardio2e_modules import cardio2e_zones,cardio2e_errors
+from cardio2e_modules import cardio2e_zones,cardio2e_errors,cardio2e_covers
 
 config = configparser.ConfigParser()
 config.read('cardio2e.conf')
 
+########
+## EXTRA VARS
+########
 # Configurações gerais
 DEBUG = int(config['global']['debug'])
+if DEBUG:
+    logging.basicConfig(level=logging.DEBUG)
+else:
+    logging.basicConfig(level=logging.INFO)
+
+_LOGGER = logging.getLogger(__name__)
+
 HA_DISCOVER_TOPIC = config['global'].get('ha_discover_prefix', 'homeassistant')
 DEFAULT_SERIAL_PORT = config['cardio2e'].get('serial_port', '/dev/ttyUSB0')
 DEFAULT_BAUDRATE = int(config['cardio2e'].get('baudrate', 9600))
@@ -28,29 +38,13 @@ MQTT_USERNAME = config['mqtt']['username']
 MQTT_PASSWORD = config['mqtt']['password']
 
 CARDIO2E_TERMINATOR="\r"
-
-# Definição dos parâmetros padrão para cada tipo de entidade
-entities_config = {
-    "LIGHTS": {"fetch_names": "fetch_light_names", "skip_init_state": "skip_init_light_state", "count": "nlights", "default_count": 10},
-    "SWITCHES": {"fetch_names": "fetch_switch_names", "skip_init_state": "skip_init_switch_state", "count": "nswitches", "default_count": 16},
-    "COVERS": {"fetch_names": "fetch_cover_names", "skip_init_state": "skip_init_cover_state", "count": "ncovers", "default_count": 20},
-    "HVAC": {"fetch_names": "fetch_names_hvac", "skip_init_state": "skip_init_state_hvac", "count": "nhvac", "default_count": 5},
-    "SECURITY": {"fetch_names": "fetch_security_names", "skip_init_state": "skip_init_security_state", "count": "nsecurity", "default_count": 1},
-    "ZONES": {"fetch_names": "fetch_zone_names", "skip_init_state": "skip_init_zone_state", "count": "nzones", "default_count": 16},
-}
-
-# Inicialização das variáveis
-for entity, params in entities_config.items():
-    globals()[f"CARDIO2E_FETCH_NAMES_{entity}"] = config['cardio2e'].get(params["fetch_names"], 'false').lower() == 'true'
-    globals()[f"CARDIO2E_SKIP_INIT_STATE_{entity}"] = config['cardio2e'].get(params["skip_init_state"], 'false').lower() == 'true'
-    globals()[f"CARDIO2E_N_{entity}"] = int(config['cardio2e'].get(params["count"], params["default_count"]))
-
-########
-## EXTRA VARS
-########
 CARDIO2E_UPDATE_DATE_INTERVAL = int(config['cardio2e'].get('update_date_interval', 3600))
-CARDIO2E_ALARM_CODE = int(config['cardio2e'].get('code', 000000))
-# Processa o valor de dimmer_lights a partir do arquivo de configuração
+
+########
+## LIGHTS
+########
+CARDIO2E_FETCH_NAMES_LIGHTS = config['cardio2e'].get('fetch_light_names', 'true').lower() == 'true'
+# Processa o valor de dimmer_lights a partir do ficheiro de configuração
 dimmer_lights_raw = config['cardio2e'].get('dimmer_lights', '[]')  # Use '[]' como padrão se não estiver no config
 try:
     CARDIO2E_DIMMER_LIGHTS = ast.literal_eval(dimmer_lights_raw)
@@ -61,6 +55,27 @@ except (ValueError, SyntaxError) as e:
     _LOGGER.error("Erro ao interpretar dimmer_lights no arquivo de configuração: %s", e)
     CARDIO2E_DIMMER_LIGHTS = []
 
+########
+## SWITCHES
+########
+CARDIO2E_FETCH_NAMES_SWITCHES = config['cardio2e'].get('fetch_switch_names', 'true').lower() == 'true'
+
+########
+## COVERS
+########
+CARDIO2E_FETCH_NAMES_COVERS = config['cardio2e'].get('fetch_cover_names', 'true').lower() == 'true'
+CARDIO2E_SKIP_INIT_COVER_STATE = config['cardio2e'].get('skip_init_cover_state', 'false').lower() == 'true'
+CARDIO2E_NCOVERS = int(config['cardio2e'].get('ncovers', 20))
+
+########
+## HVAC
+########
+CARDIO2E_FETCH_NAMES_HVAC = config['cardio2e'].get('fetch_names_hvac', 'true').lower() == 'true'
+
+########
+## ZONES
+########
+CARDIO2E_FETCH_NAMES_ZONES = config['cardio2e'].get('fetch_zone_names', 'true').lower() == 'true'
 # Processa o valor de zones_normal_as_off a partir do arquivo de configuração
 zones_normal_as_off_raw = config['cardio2e'].get('zones_normal_as_off', '[]')  # Use '[]' como padrão se não estiver no config
 try:
@@ -72,13 +87,10 @@ except (ValueError, SyntaxError) as e:
     _LOGGER.error("Erro ao interpretar zones_normal_as_off no arquivo de configuração: %s", e)
     CARDIO2E_ZONES_NORMAL_AS_OFF = []
 
-if DEBUG:
-    logging.basicConfig(level=logging.DEBUG)
-else:
-    logging.basicConfig(level=logging.INFO)
-
-_LOGGER = logging.getLogger(__name__)
-
+########
+## SECURITY
+########
+CARDIO2E_ALARM_CODE = int(config['cardio2e'].get('code', 000000))
 
 def create_shutdown_handler(serial_conn, mqtt_client):
     def handle_shutdown(signum, frame):
@@ -116,16 +128,6 @@ def main():
         cardio2e_errors.initialize_error_payload(mqtt_client)
 
         cardio_login(serial_conn, mqtt_client, state="login", password="000000")
-
-        ############
-        ### INITIALIZE LIGHTS, SWITCHES, COVERS, HVAC/TEMPERATURE AND ZONES (with bypass)
-        ############
-        initialize_entities("L", CARDIO2E_N_LIGHTS, CARDIO2E_FETCH_NAMES_LIGHTS, CARDIO2E_SKIP_INIT_STATE_LIGHTS, serial_conn, mqtt_client)
-        initialize_entities("R", CARDIO2E_N_SWITCHES, CARDIO2E_FETCH_NAMES_SWITCHES, CARDIO2E_SKIP_INIT_STATE_SWITCHES, serial_conn, mqtt_client)
-        initialize_entities("C", CARDIO2E_N_COVERS, CARDIO2E_FETCH_NAMES_COVERS, CARDIO2E_SKIP_INIT_STATE_COVERS, serial_conn, mqtt_client)
-        initialize_entities("H", CARDIO2E_N_HVAC, CARDIO2E_FETCH_NAMES_HVAC, CARDIO2E_SKIP_INIT_STATE_HVAC, serial_conn, mqtt_client)
-        initialize_entities("S", 1, CARDIO2E_FETCH_NAMES_SECURITY, False, serial_conn, mqtt_client)
-        initialize_entities("Z", CARDIO2E_N_ZONES, CARDIO2E_FETCH_NAMES_ZONES, CARDIO2E_SKIP_INIT_STATE_ZONES, serial_conn, mqtt_client)
 
         _LOGGER.info("\n################\nCardio2e ready. Listening for events.\n################")
         # Inicia a thread de escuta na porta serial
@@ -639,52 +641,6 @@ def listen_for_updates(serial_conn, mqtt_client):
         except Exception as e:
             _LOGGER.error("Error reading from RS-232: %s", e)
 
-def initialize_entities(entity_type, num_entities, fetch_names_flag, skip_init_state_flag, serial_conn, mqtt_client):
-    """
-    Inicializa entidades e publica seus nomes e estados no MQTT.
-    :param entity_type: Entity Type ("L" for light, "R" for switch, "C" for covers, "S" for security, "H" for HVAC, "Z" for zone, etc.)
-    :param num_entities: Número de entidades desse tipo.
-    :param fetch_names_flag: Flag para buscar e publicar os nomes das entidades no MQTT.
-    :param skip_init_state_flag: Flag para pular a inicialização dos estados das entidades no MQTT.
-    :param serial_conn: Conexão serial RS-232.
-    :param mqtt_client: Cliente MQTT para publicação.
-    """
-    # Publica os nomes das entidades, se solicitado
-    if fetch_names_flag:
-        for entity_id in range(1, num_entities + 1):
-            get_name(serial_conn, entity_id, entity_type, mqtt_client)
-    else:
-        _LOGGER.info("The flag for fetching %s names is deactivated; skipping name fetch.", entity_type)
-
-    # Inicializa os estados das entidades, se solicitado
-    if skip_init_state_flag:
-        _LOGGER.info("Skipped initial %s state.", entity_type)
-    else:
-        initialize_entity_states(serial_conn, mqtt_client, num_entities, entity_type)
-
-def initialize_entity_states(serial_conn, mqtt_client, num_entities, entity_type="L", interval=0.1):
-    """
-    Consulta o estado inicial de todas as entidades (luzes ou zonas) sequencialmente com um intervalo controlado e publica no MQTT.
-    :param serial_conn: Conexão serial RS-232.
-    :param mqtt_client: Cliente MQTT.
-    :param num_entities: Número de entidades (luzes ou zonas).
-    :param entity_type: Tipo da entidade ("L" para luz, "Z" para zona).
-    :param interval: Intervalo de tempo entre cada consulta (usado apenas para luzes).
-    """
-    _LOGGER.info("Initializing entity state from type %s...", entity_type)
-
-    if entity_type == "L" or entity_type == "R" or entity_type == "C" or entity_type == "S" or entity_type == "H":
-        # for lights or switches, get sequencial one by one 
-        for entity_id in range(1, num_entities + 1):
-            get_entity_state(serial_conn, mqtt_client, entity_id, entity_type)
-            time.sleep(interval)  # Intervalo entre consultas
-    elif entity_type == "Z":
-        # Para zonas, uma única chamada obtém o estado de todas as zonas
-        get_entity_state(serial_conn, mqtt_client, 1, entity_type, num_zones=num_entities)
-        get_entity_state(serial_conn, mqtt_client, 1, "B", num_zones=num_entities)
-
-    _LOGGER.info("States of all entities of type %s have been initialized", entity_type)
-
 def get_name(serial_conn, entity_id, entity_type, mqtt_client, max_retries=3, timeout=3.0):
     """
     Consulta o nome de uma luz, zona ou outra entidade via RS-232, processa a resposta e publica no MQTT.
@@ -763,7 +719,7 @@ def get_name(serial_conn, entity_id, entity_type, mqtt_client, max_retries=3, ti
     _LOGGER.warning("Could not get entity name %s %d after %d attempts. Using default name: %s", entity_type, entity_id, max_retries, default_name)
     return default_name
 
-def parse_login_response(response, mqtt_client):
+def parse_login_response(response, mqtt_client, serial_conn):
     """
     Processa a resposta recebida durante o login e publica informações no MQTT.
     :param response: Resposta completa recebida após o login.
@@ -796,6 +752,10 @@ def parse_login_response(response, mqtt_client):
                 light_state_topic = f"cardio2e/light/state/{light_id}"
                 light_state_value = "ON" if int(light_state) > 0 else "OFF"
                 mqtt_client.publish(light_state_topic, light_state_value, retain=True)
+                if CARDIO2E_FETCH_NAMES_LIGHTS:
+                    get_name(serial_conn, int(light_id), "L", mqtt_client)
+                else:
+                    _LOGGER.info("The flag for fetching lights names is deactivated; skipping name fetch.")
                 _LOGGER.info("Light %s state published to MQTT: %s", light_id, light_state_value)
 
         elif message.startswith("@I R"):
@@ -806,6 +766,10 @@ def parse_login_response(response, mqtt_client):
                 switch_state_topic = f"cardio2e/switch/state/{switch_id}"
                 switch_state_value = "ON" if switch_state == "O" else "OFF"
                 mqtt_client.publish(switch_state_topic, switch_state_value, retain=True)
+                if CARDIO2E_FETCH_NAMES_SWITCHES:
+                    get_name(serial_conn, int(switch_id), "R", mqtt_client)
+                else:
+                    _LOGGER.info("The flag for fetching switch names is deactivated; skipping name fetch.")
                 _LOGGER.info("Switch %s state published to MQTT: %s", switch_id, switch_state_value)
 
         elif message.startswith("@I H"):
@@ -834,6 +798,10 @@ def parse_login_response(response, mqtt_client):
                 mqtt_client.publish(f"{hvac_topic}/state/cooling_setpoint", cooling_setpoint, retain=True)
                 mqtt_client.publish(f"{hvac_topic}/state/fan", fan_state_value, retain=True)
                 mqtt_client.publish(f"{hvac_topic}/state/mode", hvac_state, retain=True)
+                if CARDIO2E_FETCH_NAMES_HVAC:
+                    get_name(serial_conn, int(hvac_id), "H", mqtt_client)
+                else:
+                    _LOGGER.info("The flag for fetching hvac names is deactivated; skipping name fetch.")
                 _LOGGER.info("HVAC %s state published to MQTT: Heating Set Point: %s, Cooling Set Point: %s, Fan State: %s, System mode: %s", hvac_id, heating_setpoint, cooling_setpoint, fan_state, system_mode)
 
         elif message.startswith("@I T"):
@@ -876,6 +844,10 @@ def parse_login_response(response, mqtt_client):
                 for i, state_char in enumerate(zone_states, start=1):
                     zone_state = cardio2e_zones.interpret_zone_character(state_char, i, CARDIO2E_ZONES_NORMAL_AS_OFF)
                     mqtt_client.publish(f"cardio2e/zone/state/{i}", zone_state, retain=True)
+                    if CARDIO2E_FETCH_NAMES_ZONES:
+                        get_name(serial_conn, int(i), "Z", mqtt_client)
+                    else:
+                        _LOGGER.info("The flag for fetching hvac names is deactivated; skipping name fetch.")
                     _LOGGER.info("Zone %d state published to MQTT: %s", i, zone_state)
 
         elif message.startswith("@I B"):
@@ -1099,7 +1071,9 @@ def cardio_login(serial_conn, mqtt_client, state="login", password="000000", max
                     
                     # Chama o parse_login_response apenas se for um login
                     if state == "login":
-                        parse_login_response(received_message, mqtt_client)
+                        parse_login_response(received_message, mqtt_client, serial_conn)
+                        # because on login we don't have the cover info
+                        cardio2e_covers.initialize_entity_cover(serial_conn, mqtt_client, get_name, get_entity_state, CARDIO2E_NCOVERS, CARDIO2E_FETCH_NAMES_COVERS, CARDIO2E_SKIP_INIT_COVER_STATE)
                     
                     return True
                 else:

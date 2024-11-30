@@ -13,33 +13,24 @@ update_date_interval = 3600
 
 # lights config
 fetch_light_names = true  # on startup will fetch the current name of lights. After the first time can be disabled.
-skip_init_light_state = true  # on startup will fetch the current state of lights (on login I already have the state)
-nlights = 50  # number of lights in you system
 dimmer_lights = [1, 2, 3, 4, 5]  # dimmer lights will be treated with brightness
 
 # switch config
 fetch_switch_names = true  # on startup will fetch the current name of switches. After the first time can be disabled.
-skip_init_switch_state = true  # on startup will fetch the current state of switches (on login I already have the state)
-nswitches = 16  # number of switches in you system
 
 # cover config
 fetch_cover_names = true  # on startup will fetch the current name of covers. After the first time can be disabled.
-skip_init_cover_state = true  # on startup will fetch the current state of covers (on login I already have the state)
+skip_init_cover_state = false  # on startup will fetch the current state of covers (on login I already have the state)
 ncovers = 20
 
 # temperature config
 fetch_names_hvac = true # on startup will fetch the current name of zones. After the first time can be disabled.
-skip_init_state_hvac = true  # on startup will fetch the current state of temperature (on login I already have the state)
-nhvac = 5  # number of temperature zones in you system
 
 # security config
-fetch_security_names = true  # on startup will fetch the current name of security zones. After the first time can be disabled.
 code = 000000 # (security code for arm / disarm alarm)
 
 # zones config
 fetch_zone_names = true # on startup will fetch the current name of zones. After the first time can be disabled.
-skip_init_zone_state = true  # on startup will fetch the current state of zones (on login I already have the state)
-nzones = 16  # number of zones in you system
 zones_normal_as_off = [14]       # this zones, will return off when N is returned
 
 [mqtt]
