@@ -53,4 +53,4 @@ def initialize_error_payload(mqtt_client):
 
     # Publicar a configuração do sensor no Home Assistant
     mqtt_client.publish(sensor_config_topic, json.dumps(sensor_config_payload), retain=True)
-    eLOGGER.info("Published autodiscovery config for error sensor.")
+    _LOGGER.info("Published autodiscovery config for error sensor.")

@@ -459,22 +459,26 @@ def listen_for_updates(serial_conn, mqtt_client):
                             # Comando para controle de luz "@A L <light_id>"
                             light_id = int(message_parts[2])
                             # Consultar o estado atual e publicar no MQTT
-                            get_entity_state(serial_conn, mqtt_client, light_id, "L")
+                            #get_entity_state(serial_conn, mqtt_client, light_id, "L")
+                            _LOGGER.info("OK for action light: %s", light_id)
                         elif message_parts[1] == "R":
                             # Comando para controle de luz "@A R <switch_id>"
                             switch_id = int(message_parts[2])
                             # Consultar o estado atual e publicar no MQTT
-                            get_entity_state(serial_conn, mqtt_client, switch_id, "R")
+                            #get_entity_state(serial_conn, mqtt_client, switch_id, "R")
+                            _LOGGER.info("OK for action switch: %s", switch_id)
                         elif message_parts[1] == "C":
-                            # Comando para controle de luz "@A R <cover_id>"
+                            # Comando para controle da cover "@A C <cover_id>"
                             cover_id = int(message_parts[2])
                             # Consultar o estado atual e publicar no MQTT
-                            get_entity_state(serial_conn, mqtt_client, cover_id, "C")
+                            #get_entity_state(serial_conn, mqtt_client, cover_id, "C")
+                            _LOGGER.info("OK for action cover: %s", cover_id)
                         elif message_parts[1] == "S":
                             # Comando para controle de luz "@A S <security_id>"
                             security_id = int(message_parts[2])
                             # Consultar o estado atual e publicar no MQTT
-                            get_entity_state(serial_conn, mqtt_client, security_id, "S")
+                            #get_entity_state(serial_conn, mqtt_client, security_id, "S")
+                            _LOGGER.info("OK for action security: %s", security_id)
                     elif len(message_parts) >= 3 and message_parts[0] == "@N":
                         error_msg = ""
                         if (message_parts[3] == "1"):
