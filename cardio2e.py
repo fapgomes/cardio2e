@@ -12,7 +12,7 @@ import signal
 import re
 import datetime
 
-from cardio2e_modules import cardio2e_zones,cardio2e_errors,cardio2e_covers
+from cardio2e_modules import cardio2e_zones,cardio2e_errors,cardio2e_covers,cardio2e_hvac
 
 config = configparser.ConfigParser()
 config.read('cardio2e.conf')
@@ -71,6 +71,8 @@ CARDIO2E_NCOVERS = int(config['cardio2e'].get('ncovers', 20))
 ## HVAC
 ########
 CARDIO2E_FETCH_NAMES_HVAC = config['cardio2e'].get('fetch_names_hvac', 'true').lower() == 'true'
+hvac_states = {}
+_LOGGER.info("HVAC_STATES: %s", hvac_states)
 
 ########
 ## ZONES
@@ -157,8 +159,7 @@ def on_mqtt_connect(client, userdata, flags, rc):
 
 def on_mqtt_message(client, userdata, msg):
     """Callback para quando uma mensagem é recebida em um tópico assinado."""
-    # Armazena o estado atual de cada parâmetro do HVAC para cada hvac_id
-    hvac_states = {}
+    global hvac_states
 
     topic = msg.topic
     payload = msg.payload.decode().upper()
@@ -255,14 +256,11 @@ def on_mqtt_message(client, userdata, msg):
             hvac_id = int(parts[2])  # Obtém o ID do HVAC
             setting_type = parts[-1]  # Obtém o tipo de configuração (heating_setpoint, cooling_setpoint, etc.)
 
-            # Inicializa o estado do HVAC se ainda não estiver registrado
-            if hvac_id not in hvac_states:
-                hvac_states[hvac_id] = {
-                    "heating_setpoint": 32,  # Valores padrão iniciais
-                    "cooling_setpoint": 35,
-                    "fan_state": "off",
-                    "mode": "off"
-                }
+            # Verificar se todas as chaves obrigatórias estão no estado
+            required_keys = ["heating_setpoint", "cooling_setpoint", "fan_state", "mode"]
+            for key in required_keys:
+                if key not in hvac_states[hvac_id]:
+                    hvac_states[hvac_id][key] = 0 if "setpoint" in key else "off"  # Valores padrão
 
             # Atualiza o valor do parâmetro específico com base no tópico
             if setting_type == "heating_setpoint":
@@ -278,7 +276,7 @@ def on_mqtt_message(client, userdata, msg):
                 return
 
             # Extrai os estados atuais para enviar o comando completo para o HVAC
-            heating_setpoint = hvac_states[hvac_id]["heating_setpoint"]
+            heating_setpoint = hvac_states[hvac_id]["cooling_setpoint"] - 2
             cooling_setpoint = hvac_states[hvac_id]["cooling_setpoint"]
             fan_state = hvac_states[hvac_id]["fan_state"]
             mode = hvac_states[hvac_id]["mode"]
@@ -294,14 +292,12 @@ def on_mqtt_message(client, userdata, msg):
                 mode=mode
             )
 
-            # Publica os valores atualizados nos tópicos de estado
-            base_topic = f"cardio2e/hvac/{hvac_id}/state"
-            client.publish(f"{base_topic}/heating_setpoint", heating_setpoint, retain=False)
-            client.publish(f"{base_topic}/cooling_setpoint", cooling_setpoint, retain=False)
-            client.publish(f"{base_topic}/fan", fan_state, retain=False)
-            client.publish(f"{base_topic}/mode", mode, retain=False)
+            hvac_states = cardio2e_hvac.update_hvac_state(client, hvac_states, int(hvac_id), "heating_setpoint", heating_setpoint)
+            hvac_states = cardio2e_hvac.update_hvac_state(client, hvac_states, int(hvac_id), "cooling_setpoint", cooling_setpoint)
+            hvac_states = cardio2e_hvac.update_hvac_state(client, hvac_states, int(hvac_id), "fan_state", fan_state)
+            hvac_states = cardio2e_hvac.update_hvac_state(client, hvac_states, int(hvac_id), "mode", mode)
 
-            _LOGGER.debug("Updated HVAC %d topics with new settings: Heating %.1f, Cooling %.1f, Fan %s, Mode %s",
+            _LOGGER.info("Updated HVAC %d topics with new settings: Heating %.1f, Cooling %.1f, Fan %s, Mode %s",
                           hvac_id, heating_setpoint, cooling_setpoint, fan_state, mode)
 
         except ValueError:
@@ -565,15 +561,15 @@ def listen_for_updates(serial_conn, mqtt_client):
                             base_topic = f"cardio2e/hvac/{hvac_id}/state"
 
                             # Publica o setpoint de aquecimento
-                            mqtt_client.publish(f"{base_topic}/heating_setpoint", heating_setpoint, retain=False)
+                            mqtt_client.publish(f"{base_topic}/heating_setpoint", heating_setpoint, retain=True)
                             _LOGGER.info("HVAC %d heating setpoint updated to: %s", hvac_id, heating_setpoint)
 
                             # Publica o setpoint de resfriamento
-                            mqtt_client.publish(f"{base_topic}/cooling_setpoint", cooling_setpoint, retain=False)
+                            mqtt_client.publish(f"{base_topic}/cooling_setpoint", cooling_setpoint, retain=True)
                             _LOGGER.info("HVAC %d cooling setpoint updated to: %s", hvac_id, cooling_setpoint)
 
                             # Publica o estado do ventilador
-                            mqtt_client.publish(f"{base_topic}/fan", fan_state, retain=False)
+                            mqtt_client.publish(f"{base_topic}/fan", fan_state, retain=True)
                             _LOGGER.info("HVAC %d fan state updated to: %s", hvac_id, fan_state)
 
                             # Mapeamento do modo
@@ -588,7 +584,7 @@ def listen_for_updates(serial_conn, mqtt_client):
                             mode_state = mode_mapping.get(mode_code, "unknown")
 
                             # Publica o modo de operação
-                            mqtt_client.publish(f"{base_topic}/mode", mode_state, retain=False)
+                            mqtt_client.publish(f"{base_topic}/mode", mode_state, retain=True)
                             _LOGGER.info("HVAC %d mode updated to: %s", hvac_id, mode_state)
                         # Caso o estado do alarme seja atualizado
                         elif message_parts[1] == "S":
@@ -725,6 +721,8 @@ def parse_login_response(response, mqtt_client, serial_conn):
     :param response: Resposta completa recebida após o login.
     :param mqtt_client: Cliente MQTT para publicação.
     """
+    global hvac_states
+
     # Divide a resposta em mensagens individuais usando o delimitador '\r'
     messages = response.split("\r")
 
@@ -778,7 +776,6 @@ def parse_login_response(response, mqtt_client, serial_conn):
             match = re.match(r"@I H (\d+) (\d+\.\d+) (\d+\.\d+) ([SR]) ([AHCOEN])", message)
             if match:
                 hvac_id, heating_setpoint, cooling_setpoint, fan_state, system_mode = match.groups()
-                hvac_topic = f"cardio2e/hvac/{hvac_id}"
                 fan_state_value = "on" if fan_state == "R" else "off"
                 if system_mode == "A":
                     hvac_state = "auto"
@@ -794,10 +791,14 @@ def parse_login_response(response, mqtt_client, serial_conn):
                     hvac_state = "normal"
                 else:
                     hvac_state = "Unknown"  # Caso padrão
-                mqtt_client.publish(f"{hvac_topic}/state/heating_setpoint", heating_setpoint, retain=True)
-                mqtt_client.publish(f"{hvac_topic}/state/cooling_setpoint", cooling_setpoint, retain=True)
-                mqtt_client.publish(f"{hvac_topic}/state/fan", fan_state_value, retain=True)
-                mqtt_client.publish(f"{hvac_topic}/state/mode", hvac_state, retain=True)
+
+                # Inicializa o estado do HVAC com os dados extraídos
+                hvac_states = cardio2e_hvac.initialize_hvac_state(hvac_states, int(hvac_id), heating_setpoint, cooling_setpoint, fan_state, hvac_state)
+
+                hvac_states = cardio2e_hvac.update_hvac_state(mqtt_client, hvac_states, int(hvac_id), "heating_setpoint", heating_setpoint)
+                hvac_states = cardio2e_hvac.update_hvac_state(mqtt_client, hvac_states, int(hvac_id), "cooling_setpoint", cooling_setpoint)
+                hvac_states = cardio2e_hvac.update_hvac_state(mqtt_client, hvac_states, int(hvac_id), "fan", fan_state_value)
+                hvac_states = cardio2e_hvac.update_hvac_state(mqtt_client, hvac_states, int(hvac_id), "mode", hvac_state)
                 if CARDIO2E_FETCH_NAMES_HVAC:
                     get_name(serial_conn, int(hvac_id), "H", mqtt_client)
                 else:
@@ -817,8 +818,8 @@ def parse_login_response(response, mqtt_client, serial_conn):
                     temp_status_value = "off"
                 else:
                     temp_status_value = "Unknown"  # Caso padrão
-                mqtt_client.publish(f"cardio2e/hvac/{temp_sensor_id}/state/current_temperature", temp_value, retain=True)
-                mqtt_client.publish(f"cardio2e/hvac/{temp_sensor_id}/state/alternative_status_from_temp", temp_status_value, retain=True)
+                hvac_states = cardio2e_hvac.update_hvac_state(mqtt_client, hvac_states, int(temp_sensor_id), "current_temperature", temp_value)
+                hvac_states = cardio2e_hvac.update_hvac_state(mqtt_client, hvac_states, int(temp_sensor_id), "alternative_status_from_temp", temp_status_value)
                 _LOGGER.info("Temperature sensor %s state published to MQTT: %s °C, Status: %s", temp_sensor_id, temp_value, temp_status_value)
 
         elif message.startswith("@I S"):
@@ -847,7 +848,7 @@ def parse_login_response(response, mqtt_client, serial_conn):
                     if CARDIO2E_FETCH_NAMES_ZONES:
                         get_name(serial_conn, int(i), "Z", mqtt_client)
                     else:
-                        _LOGGER.info("The flag for fetching hvac names is deactivated; skipping name fetch.")
+                        _LOGGER.info("The flag for fetching zones names is deactivated; skipping name fetch.")
                     _LOGGER.info("Zone %d state published to MQTT: %s", i, zone_state)
 
         elif message.startswith("@I B"):
@@ -874,6 +875,8 @@ def get_entity_state(serial_conn, mqtt_client, entity_id, entity_type="L", num_z
     :param max_retries: Número máximo de tentativas.
     :return: Estado da entidade.
     """
+    global hvac_states
+
     # Determina o comando com base no tipo da entidade
     command = f"@G {entity_type} 1{CARDIO2E_TERMINATOR}" if entity_type == "Z" else f"@G {entity_type} {entity_id}{CARDIO2E_TERMINATOR}"
     attempts = 0
@@ -949,10 +952,11 @@ def get_entity_state(serial_conn, mqtt_client, entity_id, entity_type="L", num_z
                         "mode": message_parts[6]
                     }
 
-                    # Publicar os setpoints de aquecimento e resfriamento, e estado do ventilador
+                    # Publicar os setpoints de aquecimento e arrefecimento, e estado do ventilador
                     for topic_suffix, state in topics.items():
                         state_topic = f"cardio2e/hvac/{entity_id}/{topic_suffix}"
-                        mqtt_client.publish(state_topic, state, retain=True)
+                        # update global hvac global var
+                        hvac_states = cardio2e_hvac.update_hvac_state(mqtt_client, hvac_states, int(entity_id), topic_suffix, state)
                         _LOGGER.info("%s for %d state published on MQTT: %s", topic_suffix.capitalize(), entity_id, state)
 
                     # Mapeamento de modos de operação
@@ -965,9 +969,9 @@ def get_entity_state(serial_conn, mqtt_client, entity_id, entity_type="L", num_z
                         "N": "normal"
                     }
 
-                    # Publicar o modo de operação
                     mode_state = mode_mapping.get(topics["mode"], "Unknown")
-                    mqtt_client.publish(f"cardio2e/hvac/{entity_id}/mode", mode_state, retain=True)
+                    # update global hvac global var
+                    hvac_states = cardio2e_hvac.update_hvac_state(mqtt_client, hvac_states, int(entity_id), "mode", mode_state)
                     _LOGGER.info("Mode for %d state published on MQTT: %s", entity_id, mode_state)
 
                     return True
@@ -1229,12 +1233,12 @@ def publish_autodiscovery_config(mqtt_client, entity_id, entity_name, entity_typ
             "fan_modes": ["on", "off"],
             
             # Limites de temperatura
-            "min_temp": 5,
+            "min_temp": 7,
             "max_temp": 35,
             
             # Qualidade de serviço e retenção
             "qos": 1,
-            "retain": False,
+            "retain": True,
             
             # Informações do dispositivo
             "device": {
