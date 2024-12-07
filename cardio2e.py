@@ -44,16 +44,26 @@ CARDIO2E_UPDATE_DATE_INTERVAL = int(config['cardio2e'].get('update_date_interval
 ## LIGHTS
 ########
 CARDIO2E_FETCH_NAMES_LIGHTS = config['cardio2e'].get('fetch_light_names', 'true').lower() == 'true'
-# Processa o valor de dimmer_lights a partir do ficheiro de configuração
+# Processes the value of dimmer_lights from the configuration file
 dimmer_lights_raw = config['cardio2e'].get('dimmer_lights', '[]')  # Use '[]' como padrão se não estiver no config
 try:
     CARDIO2E_DIMMER_LIGHTS = ast.literal_eval(dimmer_lights_raw)
     if not isinstance(CARDIO2E_DIMMER_LIGHTS, list):
-        raise ValueError("dimmer_lights no arquivo de configuração deve ser uma lista.")
+        raise ValueError("dimmer_lights must be a list.")
     CARDIO2E_DIMMER_LIGHTS = [int(light_id) for light_id in CARDIO2E_DIMMER_LIGHTS]  # Converte cada item para int
 except (ValueError, SyntaxError) as e:
-    _LOGGER.error("Erro ao interpretar dimmer_lights no arquivo de configuração: %s", e)
+    _LOGGER.error("Error interpreting dimmer_lights in config file: %s", e)
     CARDIO2E_DIMMER_LIGHTS = []
+# Processes the value of force_include_lights from the configuration file
+force_include_lights_raw = config['cardio2e'].get('force_include_lights', '[]')  # Use '[]' como padrão se não estiver no config
+try:
+    CARDIO2E_FORCE_INCLUDE_LIGHTS = ast.literal_eval(force_include_lights_raw)
+    if not isinstance(CARDIO2E_FORCE_INCLUDE_LIGHTS, list):
+        raise ValueError("force_include_lights must be a list.")
+    CARDIO2E_FORCE_INCLUDE_LIGHTS = [int(light_id) for light_id in CARDIO2E_FORCE_INCLUDE_LIGHTS]  # Converte cada item para int
+except (ValueError, SyntaxError) as e:
+    _LOGGER.error("Error interpreting force_include_lights in config file: %s", e)
+    CARDIO2E_FORCE_INCLUDE_LIGHTS = []
 
 ########
 ## SWITCHES
@@ -860,6 +870,17 @@ def parse_login_response(response, mqtt_client, serial_conn):
                     bypass_state = cardio2e_zones.interpret_bypass_character(bypass_state_char)
                     mqtt_client.publish(f"cardio2e/zone/bypass/state/{i}", bypass_state, retain=True)
                     _LOGGER.info("Bypass state for zone %d published to MQTT: %s", i, bypass_state)
+
+    # Force inclusion of lights in the CARDIO2E_FORCE_INCLUDE_LIGHTS list
+    for light_id in CARDIO2E_FORCE_INCLUDE_LIGHTS:
+        _LOGGER.info("Forcing initialization of light %s (not found in login response)", light_id)
+        # Inicialize o estado padrão (desligado ou outro valor apropriado)
+        light_state_topic = f"cardio2e/light/state/{light_id}"
+        light_state_value = "OFF"
+        mqtt_client.publish(light_state_topic, light_state_value, retain=True)
+        if CARDIO2E_FETCH_NAMES_LIGHTS:
+            get_name(serial_conn, light_id, "L", mqtt_client)
+        _LOGGER.info("Forced light %s state published to MQTT: %s", light_id, light_state_value)
 
     _LOGGER.info("Parsing completo da resposta de login.")
 

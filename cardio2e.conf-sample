@@ -14,6 +14,7 @@ update_date_interval = 3600
 # lights config
 fetch_light_names = true  # on startup will fetch the current name of lights. After the first time can be disabled.
 dimmer_lights = [1, 2, 3, 4, 5]  # dimmer lights will be treated with brightness
+force_include_lights = [46, 47] # we parse the number os lights with the login info, but if we need to force more lights we can put here
 
 # switch config
 fetch_switch_names = true  # on startup will fetch the current name of switches. After the first time can be disabled.
