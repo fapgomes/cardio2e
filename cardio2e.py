@@ -39,6 +39,7 @@ MQTT_PASSWORD = config['mqtt']['password']
 
 CARDIO2E_TERMINATOR="\r"
 CARDIO2E_UPDATE_DATE_INTERVAL = int(config['cardio2e'].get('update_date_interval', 3600))
+CARDIO2E_PASSWORD = config['cardio2e']['password']
 
 ########
 ## LIGHTS
@@ -102,7 +103,7 @@ except (ValueError, SyntaxError) as e:
 ########
 ## SECURITY
 ########
-CARDIO2E_ALARM_CODE = int(config['cardio2e'].get('code', 000000))
+CARDIO2E_ALARM_CODE = int(config['cardio2e'].get('code', 11111))
 
 def create_shutdown_handler(serial_conn, mqtt_client):
     def handle_shutdown(signum, frame):
@@ -139,7 +140,7 @@ def main():
         # init the errors topic
         cardio2e_errors.initialize_error_payload(mqtt_client)
 
-        cardio_login(serial_conn, mqtt_client, state="login", password="000000")
+        cardio_login(serial_conn, mqtt_client, state="login", password=CARDIO2E_PASSWORD)
 
         _LOGGER.info("\n################\nCardio2e ready. Listening for events.\n################")
         # Inicia a thread de escuta na porta serial
@@ -1048,7 +1049,7 @@ def get_entity_state(serial_conn, mqtt_client, entity_id, entity_type="L", num_z
     _LOGGER.warning("Could not get state for entity %s %d after %d attempts.", entity_type, entity_id, max_retries)
     return None
 
-def cardio_login(serial_conn, mqtt_client, state="login", password="000000", max_retries=5, timeout=3.0):
+def cardio_login(serial_conn, mqtt_client, state="login", password="00000", max_retries=5, timeout=3.0):
     """
     Realiza o login ou logout via RS-232 enviando o comando correspondente.
     :param serial_conn: Conexão serial RS-232.
