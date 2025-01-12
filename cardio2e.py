@@ -422,10 +422,15 @@ def listen_for_updates(serial_conn, mqtt_client):
             _LOGGER.debug("The serial connection was closed.")
             break
         try:
-            # Envia o comando de tempo a cada hora
+            # send the date every CARDIO2E_UPDATE_DATE_INTERVAL interval
             current_time = datetime.datetime.now()
             if last_time_sent is None or (current_time - last_time_sent).seconds >= CARDIO2E_UPDATE_DATE_INTERVAL:
                 time_command = current_time.strftime("%Y%m%d%H%M%S")
+
+                # scan every cover state because cardio have some problems leading with covers
+                for entity_id in range(1, CARDIO2E_NCOVERS + 1):  
+                    get_entity_state(serial_conn, mqtt_client, entity_id, "C")
+
                 send_rs232_command(serial_conn, "D", time_command)
                 # clean errors after some time
                 cardio2e_errors.report_error_state(mqtt_client, "No errors.")
@@ -624,8 +629,8 @@ def listen_for_updates(serial_conn, mqtt_client):
                                 state_topic = f"cardio2e/zone/state/{zone_id}"
                                 mqtt_client.publish(state_topic, zone_state, retain=False)
                                 if zone_state == "ON":
-                                    _LOGGER.info("Estado da zona %d publicado no MQTT: %s", zone_id, zone_state)
-                                _LOGGER.debug("Estado da zona %d publicado no MQTT: %s", zone_id, zone_state)
+                                    _LOGGER.info("Status of zone %d published to MQTT: %s", zone_id, zone_state)
+                                _LOGGER.debug("Status of zone %d published to MQTT: %s", zone_id, zone_state)
                         # Caso o bypass das zonas seja atualizado
                         elif message_parts[1] == "B":
                             # Mensagem de estado das zonas, por exemplo: "@I B 1 NNNNNNNNNNNNNNNN"
