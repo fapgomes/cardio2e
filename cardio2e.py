@@ -427,8 +427,6 @@ def listen_for_updates(serial_conn, mqtt_client):
             if last_time_sent is None or (current_time - last_time_sent).seconds >= CARDIO2E_UPDATE_DATE_INTERVAL:
                 time_command = current_time.strftime("%Y%m%d%H%M%S")
                 send_rs232_command(serial_conn, "D", time_command)
-                # get the temperature periodically
-                get_entity_state(serial_conn, mqtt_client, 1, "T")
                 # clean errors after some time
                 cardio2e_errors.report_error_state(mqtt_client, "No errors.")
                 _LOGGER.info("Sent time command to cardio2e: %s", time_command)
