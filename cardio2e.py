@@ -287,8 +287,8 @@ def on_mqtt_message(client, userdata, msg):
                 return
 
             # Extrai os estados atuais para enviar o comando completo para o HVAC
-            heating_setpoint = hvac_states[hvac_id]["cooling_setpoint"] - 2
-            cooling_setpoint = hvac_states[hvac_id]["cooling_setpoint"]
+            heating_setpoint = float(hvac_states[hvac_id]["cooling_setpoint"]) - 2
+            cooling_setpoint = float(hvac_states[hvac_id]["cooling_setpoint"])
             fan_state = hvac_states[hvac_id]["fan_state"]
             mode = hvac_states[hvac_id]["mode"]
 
