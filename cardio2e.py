@@ -648,7 +648,7 @@ def listen_for_updates(serial_conn, mqtt_client):
         except Exception as e:
             _LOGGER.error("Error reading from RS-232: %s", e)
 
-def get_name(serial_conn, entity_id, entity_type, mqtt_client, max_retries=3, timeout=3.0):
+def get_name(serial_conn, entity_id, entity_type, mqtt_client, max_retries=3, timeout=10):
     """
     Consulta o nome de uma luz, zona ou outra entidade via RS-232, processa a resposta e publica no MQTT.
     :param serial_conn: Conexão serial RS-232.
@@ -1049,7 +1049,7 @@ def get_entity_state(serial_conn, mqtt_client, entity_id, entity_type="L", num_z
     _LOGGER.warning("Could not get state for entity %s %d after %d attempts.", entity_type, entity_id, max_retries)
     return None
 
-def cardio_login(serial_conn, mqtt_client, state="login", password="00000", max_retries=5, timeout=3.0):
+def cardio_login(serial_conn, mqtt_client, state="login", password="00000", max_retries=5, timeout=10):
     """
     Realiza o login ou logout via RS-232 enviando o comando correspondente.
     :param serial_conn: Conexão serial RS-232.
