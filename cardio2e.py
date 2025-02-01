@@ -442,19 +442,8 @@ def listen_for_updates(serial_conn, mqtt_client):
                         if len(message_parts) == 2 and message_parts[0] == "@A":
                             if message_parts[1] == "D":
                                 _LOGGER.info("Cardio date update sucessully.")
-                            elif message_parts[1] == "B":
-                                # Mensagem de estado das zonas, por exemplo: "@I B 1 NNNNNNNNNNNNNNNN"
-                                bypass_states = message_parts[3]
-
-                                # Processa cada caractere de estado para cada zona
-                                for zone_id in range(1, len(bypass_states) + 1):
-                                    bypass_state_char = bypass_states[zone_id - 1]  # Caractere correspondente à zona
-                                    bypass_state = cardio2e_zones.interpret_bypass_character(bypass_state_char)
-
-                                    # Publica o estado da zona no MQTT
-                                    state_topic = f"cardio2e/zone/bypass/state/{zone_id}"
-                                    mqtt_client.publish(state_topic, bypass_state, retain=False)
-                                    _LOGGER.debug("Zone %d state publish to MQTT: %s", zone_id, bypass_state)
+                            elif message_parts[1] == "B 1":
+                                get_entity_state(serial_conn, mqtt_client, 1, "B")
                         elif len(message_parts) == 3 and message_parts[0] == "@A":
                             if message_parts[1] == "L":
                                 # Comando para controle de luz "@A L <light_id>"
