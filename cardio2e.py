@@ -202,12 +202,6 @@ def on_mqtt_message(client, userdata, msg):
         # Envia comando convertido para o RS-232
         send_rs232_command(userdata["serial_conn"], "L", light_id, command)
 
-        # Atualiza o tópico de estado com o valor convertido
-        state_topic = f"cardio2e/light/state/{light_id}"
-        light_state = "ON" if command > 0 else "OFF"
-        client.publish(state_topic, light_state, retain=False)
-        _LOGGER.debug("Updating status topic for %s with value %s", state_topic, light_state)
-    
     # Verify if a switch message appears
     elif topic.startswith("cardio2e/switch/set/"):
         try:
@@ -228,12 +222,6 @@ def on_mqtt_message(client, userdata, msg):
         # Envia comando convertido para o RS-232
         send_rs232_command(userdata["serial_conn"], "R", switch_id, command)
 
-        # Atualiza o tópico de estado com o valor convertido
-        state_topic = f"cardio2e/switch/state/{switch_id}"
-        switch_state = "ON" if command == "O" else "OFF"
-        client.publish(state_topic, switch_state, retain=False)
-        _LOGGER.debug("Atualizando o tópico de estado para %s com valor %s", state_topic, switch_state)
-
     # Check if the message is for covers
     elif topic.startswith("cardio2e/cover/set/"):
         try:
@@ -253,11 +241,6 @@ def on_mqtt_message(client, userdata, msg):
 
         # Envia comando para definir a posição do estore no RS-232
         send_rs232_command(userdata["serial_conn"], "C", cover_id, position)
-
-        # Atualiza o tópico de posição do estore
-        position_topic = f"cardio2e/cover/state/{cover_id}"
-        client.publish(position_topic, position, retain=False)
-        _LOGGER.debug("Updating position topic for %s with value %d", position_topic, position)
 
     # Check if the message is for HVAC
     elif topic.startswith("cardio2e/hvac/") and "/set/" in topic:
@@ -336,11 +319,6 @@ def on_mqtt_message(client, userdata, msg):
         # Envia comando convertido para o RS-232
         send_rs232_command(userdata["serial_conn"], "S", security_id, command)
 
-        # Atualiza o tópico de estado com o valor convertido
-        state_topic = f"cardio2e/alarm/state/{security_id}"
-        client.publish(state_topic, payload.lower(), retain=False)
-        _LOGGER.debug("Atualizando o tópico de estado para %s com valor %s", state_topic, payload.lower())
-
     # Checks if the message is for bypass control of a zone
     elif topic.startswith("cardio2e/zone/bypass/set/"):
         zone_bypass_states = ["N"] * 16  # 'N' significa ativo, 'Y' significa bypass
@@ -363,10 +341,6 @@ def on_mqtt_message(client, userdata, msg):
 
         # Envia o comando completo de bypass com o estado de todas as zonas
         send_rs232_command(userdata["serial_conn"], "B", 1, "".join(zone_bypass_states))
-
-        # Publica o estado de bypass no MQTT para refletir a mudança
-        bypass_topic = f"cardio2e/zone/bypass/state/{zone_id}"
-        client.publish(bypass_topic, payload, retain=True)
 
 def send_rs232_command(serial_conn, entity_type, entity_id, state=None, heating_setpoint=None, cooling_setpoint=None, fan_state=None, mode=None):
     """
