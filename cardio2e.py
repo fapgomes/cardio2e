@@ -437,219 +437,222 @@ def listen_for_updates(serial_conn, mqtt_client):
                 _LOGGER.info("Sent time command to cardio2e: %s", time_command)
                 last_time_sent = current_time
 
-            # Ler a linha recebida do RS-232
-            received_message = serial_conn.readline().decode().strip()
-            if received_message:
-                _LOGGER.debug("RS-232 message received: %s", received_message)
+            # Verifica se há dados para ler antes de chamar readline()
+            if serial_conn.in_waiting > 0:
+                # Ler a linha recebida do RS-232
+                received_message = serial_conn.readline().decode().strip()
+                if received_message:
+                    _LOGGER.debug("RS-232 message received: %s", received_message)
 
-                # Dividir a linha em mensagens separadas (caso múltiplas mensagens estejam na mesma linha)
-                #messages = received_message.split('@')
-                # Dividir a linha em mensagens separadas com '@' e '\r' (#015) como delimitadores
-                messages = []
-                for part in received_message.split('@'):
-                    sub_parts = part.split('\r')
-                    messages.extend(sub_parts)
+                    # Dividir a linha em mensagens separadas (caso múltiplas mensagens estejam na mesma linha)
+                    #messages = received_message.split('@')
+                    # Dividir a linha em mensagens separadas com '@' e '\r' (#015) como delimitadores
+                    messages = []
+                    for part in received_message.split('@'):
+                        sub_parts = part.split('\r')
+                        messages.extend(sub_parts)
 
-                # Processa cada mensagem individualmente
-                for msg in messages:
-                    if not msg:  # Ignora strings vazias
-                        continue
+                    # Processa cada mensagem individualmente
+                    for msg in messages:
+                        if not msg:  # Ignora strings vazias
+                            continue
 
-                    # Adiciona o caractere '@' de volta ao início da mensagem
-                    msg = '@' + msg.strip()
-                    _LOGGER.info("Processing individual message: %s", msg)
+                        # Adiciona o caractere '@' de volta ao início da mensagem
+                        msg = '@' + msg.strip()
+                        _LOGGER.info("Processing individual message: %s", msg)
 
-                    # Dividir a mensagem em partes para identificação
-                    message_parts = msg.split()
+                        # Dividir a mensagem em partes para identificação
+                        message_parts = msg.split()
 
-                    # Caso o comando seja enviado pelo Home Assistant
-                    if len(message_parts) == 2 and message_parts[0] == "@A":
-                        if message_parts[1] == "D":
-                            _LOGGER.info("Cardio date update sucessully.")
-                    elif len(message_parts) == 3 and message_parts[0] == "@A":
-                        if message_parts[1] == "L":
-                            # Comando para controle de luz "@A L <light_id>"
-                            light_id = int(message_parts[2])
-                            # Consultar o estado atual e publicar no MQTT
-                            #get_entity_state(serial_conn, mqtt_client, light_id, "L")
-                            _LOGGER.info("OK for action light: %s", light_id)
-                        elif message_parts[1] == "R":
-                            # Comando para controle de luz "@A R <switch_id>"
-                            switch_id = int(message_parts[2])
-                            # Consultar o estado atual e publicar no MQTT
-                            #get_entity_state(serial_conn, mqtt_client, switch_id, "R")
-                            _LOGGER.info("OK for action switch: %s", switch_id)
-                        elif message_parts[1] == "C":
-                            # Comando para controle da cover "@A C <cover_id>"
-                            cover_id = int(message_parts[2])
-                            # Consultar o estado atual e publicar no MQTT
-                            #get_entity_state(serial_conn, mqtt_client, cover_id, "C")
-                            _LOGGER.info("OK for action cover: %s", cover_id)
-                        elif message_parts[1] == "S":
-                            # Comando para controle de luz "@A S <security_id>"
-                            security_id = int(message_parts[2])
-                            # Consultar o estado atual e publicar no MQTT
-                            #get_entity_state(serial_conn, mqtt_client, security_id, "S")
-                            _LOGGER.info("OK for action security: %s", security_id)
-                    elif len(message_parts) >= 3 and message_parts[0] == "@N":
-                        error_msg = ""
-                        if (message_parts[3] == "1"):
-                            error_msg = "Object type specified by the transaction is not recognized."
-                        elif (message_parts[3] == "2"):
-                            error_msg = "Object number is out of range for the object type specified."
-                        elif (message_parts[3] == "3"):
-                            error_msg = "One or more parameters are not valid."
-                        elif (message_parts[3] == "4"):
-                            error_msg = "Security code is not valid."
-                        elif (message_parts[3] == "5"):
-                            error_msg = "Transaction S (Set) not supported for the requested type of object."
-                        elif (message_parts[3] == "6"):
-                            error_msg = "Transaction G (Get) not supported for the requested type of object."
-                        elif (message_parts[3] == "7"):
-                            error_msg = "Transaction is refused because security is armed."
-                        elif (message_parts[3] == "8"):
-                            error_msg = "This zone can be ignored."
-                        elif (message_parts[3] == "16"):
-                            error_msg = "Security can not be armed because there are open zones."
-                        elif (message_parts[3] == "17"):
-                            error_msg = "Security can not be armed because there is a power problem."
-                        elif (message_parts[3] == "18"):
-                            error_msg = "Security can not be armed for an unknown reason."
-                        else:
-                            error_msg = "Unkown error message."
-                        cardio2e_errors.report_error_state(mqtt_client, error_msg)
-                        _LOGGER.info("\n#######\nNACK from cardio with transaction %s: %s", msg, error_msg)
-                        
-                    elif len(message_parts) >= 4 and message_parts[0] == "@I":
-                        # Caso o estado da luz tenha sido alterado manualmente ou externamente
-                        if message_parts[1] == "L":
-                            # Estado atualizado "@I L <light_id> <state>"
-                            light_id = int(message_parts[2])
-                            state = int(message_parts[3])
-
-                            # Define o estado como "ON" se o brilho for maior que 0, caso contrário "OFF"
-                            light_state = "ON" if state > 0 else "OFF"
-
-                            # Publica o estado ON/OFF no tópico de estado
-                            state_topic = f"cardio2e/light/state/{light_id}"
-                            mqtt_client.publish(state_topic, light_state, retain=False)
-                            _LOGGER.info("Light %d state updated to: %s", light_id, light_state)
-
-                            # Para luzes dimmer, publica o valor exato de brilho no tópico de brilho
-                            if light_id in CARDIO2E_DIMMER_LIGHTS:
-                                brightness_topic = f"cardio2e/light/brightness/{light_id}"
-                                mqtt_client.publish(brightness_topic, state, retain=False)
-                                _LOGGER.info("Light %d brightness updated to: %d", light_id, state)
-                        elif message_parts[1] == "R":
-                            # Estado atualizado "@I R <relay_id> <state>"
-                            switch_id = int(message_parts[2])
-                            state = message_parts[3]
-
-                            # Define o estado como "ON" se o brilho for maior que 0, caso contrário "OFF"
-                            switch_state = "ON" if state == "O" else "OFF"
-
-                            # Publica o estado ON/OFF no tópico de estado
-                            state_topic = f"cardio2e/switch/state/{switch_id}"
-                            mqtt_client.publish(state_topic, switch_state, retain=False)
-                            _LOGGER.info("Switch %d state, updated to: %s", switch_id, switch_state)
-                        elif message_parts[1] == "C":
-                            # Estado atualizado "@I C <cover_id> <state>"
-                            cover_id = int(message_parts[2])
-                            cover_state = message_parts[3]
-
-                            # Publica o estado ON/OFF no tópico de estado
-                            state_topic = f"cardio2e/cover/state/{cover_id}"
-                            mqtt_client.publish(state_topic, cover_state, retain=False)
-                            _LOGGER.info("Cover %d state, updated to: %s", cover_id, cover_state)
-                        elif message_parts[1] == "H":
-                            # Estado atualizado "@I H <hvac_id> <heating_setpoint> <cooling_setpoint> <fan_state> <mode>"
-                            hvac_id = int(message_parts[2])
-
-                            # Extrai os valores do payload
-                            heating_setpoint = message_parts[3]
-                            cooling_setpoint = message_parts[4]
-                            fan_state = "on" if message_parts[5] == "R" else "off"
-                            mode_code = message_parts[6]
-
-                            # Define os tópicos para cada propriedade do HVAC
-                            base_topic = f"cardio2e/hvac/{hvac_id}/state"
-
-                            # Publica o setpoint de aquecimento
-                            mqtt_client.publish(f"{base_topic}/heating_setpoint", heating_setpoint, retain=True)
-                            _LOGGER.info("HVAC %d heating setpoint updated to: %s", hvac_id, heating_setpoint)
-
-                            # Publica o setpoint de resfriamento
-                            mqtt_client.publish(f"{base_topic}/cooling_setpoint", cooling_setpoint, retain=True)
-                            _LOGGER.info("HVAC %d cooling setpoint updated to: %s", hvac_id, cooling_setpoint)
-
-                            # Publica o estado do ventilador
-                            mqtt_client.publish(f"{base_topic}/fan", fan_state, retain=True)
-                            _LOGGER.info("HVAC %d fan state updated to: %s", hvac_id, fan_state)
-
-                            # Mapeamento do modo
-                            mode_mapping = {
-                                "A": "auto",
-                                "H": "heat",
-                                "C": "cool",
-                                "O": "off",
-                                "E": "economy",
-                                "N": "normal"
-                            }
-                            mode_state = mode_mapping.get(mode_code, "unknown")
-
-                            # Publica o modo de operação
-                            mqtt_client.publish(f"{base_topic}/mode", mode_state, retain=True)
-                            _LOGGER.info("HVAC %d mode updated to: %s", hvac_id, mode_state)
-                        # Caso o estado do alarme seja atualizado
-                        elif message_parts[1] == "S":
-                            # Estado atualizado "@I S <security_id> <state>"
-                            security_id = int(message_parts[2])
-                            security_state = message_parts[3]
-
-                            if security_state == "A":
-                                security_state_value = "armed_away" 
-                            elif security_state == "D":
-                                security_state_value = "disarmed" 
+                        # Caso o comando seja enviado pelo Home Assistant
+                        if len(message_parts) == 2 and message_parts[0] == "@A":
+                            if message_parts[1] == "D":
+                                _LOGGER.info("Cardio date update sucessully.")
+                        elif len(message_parts) == 3 and message_parts[0] == "@A":
+                            if message_parts[1] == "L":
+                                # Comando para controle de luz "@A L <light_id>"
+                                light_id = int(message_parts[2])
+                                # Consultar o estado atual e publicar no MQTT
+                                #get_entity_state(serial_conn, mqtt_client, light_id, "L")
+                                _LOGGER.info("OK for action light: %s", light_id)
+                            elif message_parts[1] == "R":
+                                # Comando para controle de luz "@A R <switch_id>"
+                                switch_id = int(message_parts[2])
+                                # Consultar o estado atual e publicar no MQTT
+                                #get_entity_state(serial_conn, mqtt_client, switch_id, "R")
+                                _LOGGER.info("OK for action switch: %s", switch_id)
+                            elif message_parts[1] == "C":
+                                # Comando para controle da cover "@A C <cover_id>"
+                                cover_id = int(message_parts[2])
+                                # Consultar o estado atual e publicar no MQTT
+                                #get_entity_state(serial_conn, mqtt_client, cover_id, "C")
+                                _LOGGER.info("OK for action cover: %s", cover_id)
+                            elif message_parts[1] == "S":
+                                # Comando para controle de luz "@A S <security_id>"
+                                security_id = int(message_parts[2])
+                                # Consultar o estado atual e publicar no MQTT
+                                #get_entity_state(serial_conn, mqtt_client, security_id, "S")
+                                _LOGGER.info("OK for action security: %s", security_id)
+                        elif len(message_parts) >= 3 and message_parts[0] == "@N":
+                            error_msg = ""
+                            if (message_parts[3] == "1"):
+                                error_msg = "Object type specified by the transaction is not recognized."
+                            elif (message_parts[3] == "2"):
+                                error_msg = "Object number is out of range for the object type specified."
+                            elif (message_parts[3] == "3"):
+                                error_msg = "One or more parameters are not valid."
+                            elif (message_parts[3] == "4"):
+                                error_msg = "Security code is not valid."
+                            elif (message_parts[3] == "5"):
+                                error_msg = "Transaction S (Set) not supported for the requested type of object."
+                            elif (message_parts[3] == "6"):
+                                error_msg = "Transaction G (Get) not supported for the requested type of object."
+                            elif (message_parts[3] == "7"):
+                                error_msg = "Transaction is refused because security is armed."
+                            elif (message_parts[3] == "8"):
+                                error_msg = "This zone can be ignored."
+                            elif (message_parts[3] == "16"):
+                                error_msg = "Security can not be armed because there are open zones."
+                            elif (message_parts[3] == "17"):
+                                error_msg = "Security can not be armed because there is a power problem."
+                            elif (message_parts[3] == "18"):
+                                error_msg = "Security can not be armed for an unknown reason."
                             else:
-                                security_state_value = "unkown"
+                                error_msg = "Unkown error message."
+                            cardio2e_errors.report_error_state(mqtt_client, error_msg)
+                            _LOGGER.info("\n#######\nNACK from cardio with transaction %s: %s", msg, error_msg)
+                            
+                        elif len(message_parts) >= 4 and message_parts[0] == "@I":
+                            # Caso o estado da luz tenha sido alterado manualmente ou externamente
+                            if message_parts[1] == "L":
+                                # Estado atualizado "@I L <light_id> <state>"
+                                light_id = int(message_parts[2])
+                                state = int(message_parts[3])
 
-                            state_topic = f"cardio2e/alarm/state/{security_id}"
-                            mqtt_client.publish(state_topic, security_state_value, retain=False)
-                            _LOGGER.info("Security %d state, updated to: %s - %s", security_id, security_state, security_state_value)
-                        elif message_parts[1] == "Z":
-                            # Mensagem de estado das zonas, por exemplo: "@I Z 1 CCCCCCCCCCOOOOCC"
-                            zone_states = message_parts[3]
+                                # Define o estado como "ON" se o brilho for maior que 0, caso contrário "OFF"
+                                light_state = "ON" if state > 0 else "OFF"
 
-                            # Processa cada caractere de estado para cada zona
-                            for zone_id in range(1, len(zone_states) + 1):
-                                zone_state_char = zone_states[zone_id - 1]  # Caractere correspondente à zona
-                                zone_state = cardio2e_zones.interpret_zone_character(zone_state_char, zone_id, CARDIO2E_ZONES_NORMAL_AS_OFF)
+                                # Publica o estado ON/OFF no tópico de estado
+                                state_topic = f"cardio2e/light/state/{light_id}"
+                                mqtt_client.publish(state_topic, light_state, retain=False)
+                                _LOGGER.info("Light %d state updated to: %s", light_id, light_state)
 
-                                # Publica o estado da zona no MQTT
-                                state_topic = f"cardio2e/zone/state/{zone_id}"
-                                mqtt_client.publish(state_topic, zone_state, retain=False)
-                                if zone_state == "ON":
-                                    _LOGGER.info("Status of zone %d published to MQTT: %s", zone_id, zone_state)
-                                _LOGGER.debug("Status of zone %d published to MQTT: %s", zone_id, zone_state)
-                        # Caso o bypass das zonas seja atualizado
-                        elif message_parts[1] == "B":
-                            # Mensagem de estado das zonas, por exemplo: "@I B 1 NNNNNNNNNNNNNNNN"
-                            bypass_states = message_parts[3]
+                                # Para luzes dimmer, publica o valor exato de brilho no tópico de brilho
+                                if light_id in CARDIO2E_DIMMER_LIGHTS:
+                                    brightness_topic = f"cardio2e/light/brightness/{light_id}"
+                                    mqtt_client.publish(brightness_topic, state, retain=False)
+                                    _LOGGER.info("Light %d brightness updated to: %d", light_id, state)
+                            elif message_parts[1] == "R":
+                                # Estado atualizado "@I R <relay_id> <state>"
+                                switch_id = int(message_parts[2])
+                                state = message_parts[3]
 
-                            # Processa cada caractere de estado para cada zona
-                            for zone_id in range(1, len(bypass_states) + 1):
-                                bypass_state_char = bypass_states[zone_id - 1]  # Caractere correspondente à zona
-                                bypass_state = cardio2e_zones.interpret_bypass_character(bypass_state_char)
+                                # Define o estado como "ON" se o brilho for maior que 0, caso contrário "OFF"
+                                switch_state = "ON" if state == "O" else "OFF"
 
-                                # Publica o estado da zona no MQTT
-                                state_topic = f"cardio2e/zone/bypass/state/{zone_id}"
-                                mqtt_client.publish(state_topic, bypass_state, retain=False)
-                                #_LOGGER.debug("Estado da zona %d publicado no MQTT: %s", zone_id, bypass_state)
-                    else:
-                        _LOGGER.error("Response not processed: %s", message_parts)
+                                # Publica o estado ON/OFF no tópico de estado
+                                state_topic = f"cardio2e/switch/state/{switch_id}"
+                                mqtt_client.publish(state_topic, switch_state, retain=False)
+                                _LOGGER.info("Switch %d state, updated to: %s", switch_id, switch_state)
+                            elif message_parts[1] == "C":
+                                # Estado atualizado "@I C <cover_id> <state>"
+                                cover_id = int(message_parts[2])
+                                cover_state = message_parts[3]
+
+                                # Publica o estado ON/OFF no tópico de estado
+                                state_topic = f"cardio2e/cover/state/{cover_id}"
+                                mqtt_client.publish(state_topic, cover_state, retain=False)
+                                _LOGGER.info("Cover %d state, updated to: %s", cover_id, cover_state)
+                            elif message_parts[1] == "H":
+                                # Estado atualizado "@I H <hvac_id> <heating_setpoint> <cooling_setpoint> <fan_state> <mode>"
+                                hvac_id = int(message_parts[2])
+
+                                # Extrai os valores do payload
+                                heating_setpoint = message_parts[3]
+                                cooling_setpoint = message_parts[4]
+                                fan_state = "on" if message_parts[5] == "R" else "off"
+                                mode_code = message_parts[6]
+
+                                # Define os tópicos para cada propriedade do HVAC
+                                base_topic = f"cardio2e/hvac/{hvac_id}/state"
+
+                                # Publica o setpoint de aquecimento
+                                mqtt_client.publish(f"{base_topic}/heating_setpoint", heating_setpoint, retain=True)
+                                _LOGGER.info("HVAC %d heating setpoint updated to: %s", hvac_id, heating_setpoint)
+
+                                # Publica o setpoint de resfriamento
+                                mqtt_client.publish(f"{base_topic}/cooling_setpoint", cooling_setpoint, retain=True)
+                                _LOGGER.info("HVAC %d cooling setpoint updated to: %s", hvac_id, cooling_setpoint)
+
+                                # Publica o estado do ventilador
+                                mqtt_client.publish(f"{base_topic}/fan", fan_state, retain=True)
+                                _LOGGER.info("HVAC %d fan state updated to: %s", hvac_id, fan_state)
+
+                                # Mapeamento do modo
+                                mode_mapping = {
+                                    "A": "auto",
+                                    "H": "heat",
+                                    "C": "cool",
+                                    "O": "off",
+                                    "E": "economy",
+                                    "N": "normal"
+                                }
+                                mode_state = mode_mapping.get(mode_code, "unknown")
+
+                                # Publica o modo de operação
+                                mqtt_client.publish(f"{base_topic}/mode", mode_state, retain=True)
+                                _LOGGER.info("HVAC %d mode updated to: %s", hvac_id, mode_state)
+                            # Caso o estado do alarme seja atualizado
+                            elif message_parts[1] == "S":
+                                # Estado atualizado "@I S <security_id> <state>"
+                                security_id = int(message_parts[2])
+                                security_state = message_parts[3]
+
+                                if security_state == "A":
+                                    security_state_value = "armed_away" 
+                                elif security_state == "D":
+                                    security_state_value = "disarmed" 
+                                else:
+                                    security_state_value = "unkown"
+
+                                state_topic = f"cardio2e/alarm/state/{security_id}"
+                                mqtt_client.publish(state_topic, security_state_value, retain=False)
+                                _LOGGER.info("Security %d state, updated to: %s - %s", security_id, security_state, security_state_value)
+                            elif message_parts[1] == "Z":
+                                # Mensagem de estado das zonas, por exemplo: "@I Z 1 CCCCCCCCCCOOOOCC"
+                                zone_states = message_parts[3]
+
+                                # Processa cada caractere de estado para cada zona
+                                for zone_id in range(1, len(zone_states) + 1):
+                                    zone_state_char = zone_states[zone_id - 1]  # Caractere correspondente à zona
+                                    zone_state = cardio2e_zones.interpret_zone_character(zone_state_char, zone_id, CARDIO2E_ZONES_NORMAL_AS_OFF)
+
+                                    # Publica o estado da zona no MQTT
+                                    state_topic = f"cardio2e/zone/state/{zone_id}"
+                                    mqtt_client.publish(state_topic, zone_state, retain=False)
+                                    if zone_state == "ON":
+                                        _LOGGER.info("Status of zone %d published to MQTT: %s", zone_id, zone_state)
+                                    _LOGGER.debug("Status of zone %d published to MQTT: %s", zone_id, zone_state)
+                            # Caso o bypass das zonas seja atualizado
+                            elif message_parts[1] == "B":
+                                # Mensagem de estado das zonas, por exemplo: "@I B 1 NNNNNNNNNNNNNNNN"
+                                bypass_states = message_parts[3]
+
+                                # Processa cada caractere de estado para cada zona
+                                for zone_id in range(1, len(bypass_states) + 1):
+                                    bypass_state_char = bypass_states[zone_id - 1]  # Caractere correspondente à zona
+                                    bypass_state = cardio2e_zones.interpret_bypass_character(bypass_state_char)
+
+                                    # Publica o estado da zona no MQTT
+                                    state_topic = f"cardio2e/zone/bypass/state/{zone_id}"
+                                    mqtt_client.publish(state_topic, bypass_state, retain=False)
+                                    #_LOGGER.debug("Estado da zona %d publicado no MQTT: %s", zone_id, bypass_state)
+                        else:
+                            _LOGGER.error("Response not processed: %s", message_parts)
 
         except Exception as e:
-            _LOGGER.error("Error reading from RS-232: %s", e)
+            _LOGGER.error("Error reading from RS-232 loop: %s", e)
+            time.sleep(1)
 
 def get_name(serial_conn, entity_id, entity_type, mqtt_client, max_retries=3, timeout=10):
     """
