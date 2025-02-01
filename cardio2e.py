@@ -339,7 +339,7 @@ def on_mqtt_message(client, userdata, msg):
         # Atualiza o tópico de estado com o valor convertido
         state_topic = f"cardio2e/alarm/state/{security_id}"
         client.publish(state_topic, payload.lower(), retain=False)
-        _LOGGER.debug("Atualizando o tópico de estado para %s com valor %s", state_topic, security_state)
+        _LOGGER.debug("Atualizando o tópico de estado para %s com valor %s", state_topic, payload.lower())
 
     # Checks if the message is for bypass control of a zone
     elif topic.startswith("cardio2e/zone/bypass/set/"):
@@ -468,28 +468,28 @@ def listen_for_updates(serial_conn, mqtt_client):
                             _LOGGER.info("Cardio date update sucessully.")
                     elif len(message_parts) == 3 and message_parts[0] == "@A":
                         if message_parts[1] == "L":
-                    #        # Comando para controle de luz "@A L <light_id>"
-                    #        light_id = int(message_parts[2])
-                    #        # Consultar o estado atual e publicar no MQTT
-                    #        #get_entity_state(serial_conn, mqtt_client, light_id, "L")
+                            # Comando para controle de luz "@A L <light_id>"
+                            light_id = int(message_parts[2])
+                            # Consultar o estado atual e publicar no MQTT
+                            #get_entity_state(serial_conn, mqtt_client, light_id, "L")
                             _LOGGER.info("OK for action light: %s", light_id)
                         elif message_parts[1] == "R":
-                    #        # Comando para controle de luz "@A R <switch_id>"
-                    #        switch_id = int(message_parts[2])
-                    #        # Consultar o estado atual e publicar no MQTT
-                    #        #get_entity_state(serial_conn, mqtt_client, switch_id, "R")
+                            # Comando para controle de luz "@A R <switch_id>"
+                            switch_id = int(message_parts[2])
+                            # Consultar o estado atual e publicar no MQTT
+                            #get_entity_state(serial_conn, mqtt_client, switch_id, "R")
                             _LOGGER.info("OK for action switch: %s", switch_id)
                         elif message_parts[1] == "C":
-                    #        # Comando para controle da cover "@A C <cover_id>"
-                    #        cover_id = int(message_parts[2])
-                    #        # Consultar o estado atual e publicar no MQTT
-                    #        #get_entity_state(serial_conn, mqtt_client, cover_id, "C")
+                            # Comando para controle da cover "@A C <cover_id>"
+                            cover_id = int(message_parts[2])
+                            # Consultar o estado atual e publicar no MQTT
+                            #get_entity_state(serial_conn, mqtt_client, cover_id, "C")
                             _LOGGER.info("OK for action cover: %s", cover_id)
                         elif message_parts[1] == "S":
-                    #        # Comando para controle de luz "@A S <security_id>"
-                    #        security_id = int(message_parts[2])
-                    #        # Consultar o estado atual e publicar no MQTT
-                    #        #get_entity_state(serial_conn, mqtt_client, security_id, "S")
+                            # Comando para controle de luz "@A S <security_id>"
+                            security_id = int(message_parts[2])
+                            # Consultar o estado atual e publicar no MQTT
+                            #get_entity_state(serial_conn, mqtt_client, security_id, "S")
                             _LOGGER.info("OK for action security: %s", security_id)
                     elif len(message_parts) >= 3 and message_parts[0] == "@N":
                         error_msg = ""
