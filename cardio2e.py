@@ -442,8 +442,6 @@ def listen_for_updates(serial_conn, mqtt_client):
                         if len(message_parts) == 2 and message_parts[0] == "@A":
                             if message_parts[1] == "D":
                                 _LOGGER.info("Cardio date update sucessully.")
-                            elif message_parts[1] == "B 1":
-                                get_entity_state(serial_conn, mqtt_client, 1, "B")
                         elif len(message_parts) == 3 and message_parts[0] == "@A":
                             if message_parts[1] == "L":
                                 # Comando para controle de luz "@A L <light_id>"
@@ -469,6 +467,10 @@ def listen_for_updates(serial_conn, mqtt_client):
                                 # Consultar o estado atual e publicar no MQTT
                                 #get_entity_state(serial_conn, mqtt_client, security_id, "S")
                                 _LOGGER.info("OK for action security: %s", security_id)
+                            elif message_parts[1] == "B" and int(message_parts[2]) == 1:
+                                # Comando para controle de bypass "@A B 1"
+                                get_entity_state(serial_conn, mqtt_client, 1, "B")
+                                _LOGGER.info("Bypass zones re-publish.")
                         elif len(message_parts) >= 3 and message_parts[0] == "@N":
                             error_msg = ""
                             if (message_parts[3] == "1"):
