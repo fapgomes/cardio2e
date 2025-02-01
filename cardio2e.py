@@ -343,7 +343,7 @@ def on_mqtt_message(client, userdata, msg):
 
     # Checks if the message is for bypass control of a zone
     elif topic.startswith("cardio2e/zone/bypass/set/"):
-        zone_bypass_states = ["N"] * CARDIO2E_N_ZONES  # 'N' significa ativo, 'Y' significa bypass
+        zone_bypass_states = ["N"] * 16  # 'N' significa ativo, 'Y' significa bypass
         try:
             zone_id = int(topic.split("/")[-1])
         except ValueError:
