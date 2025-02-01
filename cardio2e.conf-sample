@@ -28,7 +28,7 @@ ncovers = 20
 fetch_names_hvac = true # on startup will fetch the current name of zones. After the first time can be disabled.
 
 # security config
-code = 11111 # (security code for arm / disarm alarm)
+code = 12345 # (security code for arm / disarm alarm)
 
 # zones config
 fetch_zone_names = true # on startup will fetch the current name of zones. After the first time can be disabled.
