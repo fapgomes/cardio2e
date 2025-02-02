@@ -166,6 +166,7 @@ def on_mqtt_connect(client, userdata, flags, rc):
     client.subscribe("cardio2e/hvac/+/set/#")  # Subscreve dinamicamente a qualquer hvac_id
     client.subscribe("cardio2e/alarm/set/#")
     client.subscribe("cardio2e/zone/bypass/set/#")
+    client.subscribe("cardio2e/scenario/set/#")
 
     _LOGGER.info("Subscribed to all necessary topics.")
 
