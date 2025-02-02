@@ -363,8 +363,8 @@ def on_mqtt_message(client, userdata, msg):
             else:
                 _LOGGER.warning("Bypass command failed, state not updated.")
 
-            except Exception as e:
-                _LOGGER.error("Error sending bypass command: %s", e)
+        except Exception as e:
+            _LOGGER.error("Error sending bypass command: %s", e)
 
 def send_rs232_command(serial_conn, entity_type, entity_id, state=None, heating_setpoint=None, cooling_setpoint=None, fan_state=None, mode=None):
     """
