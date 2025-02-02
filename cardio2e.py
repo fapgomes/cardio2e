@@ -99,6 +99,7 @@ try:
 except (ValueError, SyntaxError) as e:
     _LOGGER.error("Erro ao interpretar zones_normal_as_off no arquivo de configuração: %s", e)
     CARDIO2E_ZONES_NORMAL_AS_OFF = []
+bypass_states = ""
 
 ########
 ## SECURITY
@@ -171,6 +172,7 @@ def on_mqtt_connect(client, userdata, flags, rc):
 def on_mqtt_message(client, userdata, msg):
     """Callback para quando uma mensagem é recebida em um tópico assinado."""
     global hvac_states
+    global bypass_states
 
     topic = msg.topic
     payload = msg.payload.decode().upper()
@@ -186,7 +188,7 @@ def on_mqtt_message(client, userdata, msg):
 
         # Converte o payload para o comando apropriado para RS-232
         if payload == "ON":
-            command = 100  # Valor padrão para ligar (pode ser ajustado se necessário)
+            command = 100 
         elif payload == "OFF":
             command = 0
         else:
@@ -321,7 +323,17 @@ def on_mqtt_message(client, userdata, msg):
 
     # Checks if the message is for bypass control of a zone
     elif topic.startswith("cardio2e/zone/bypass/set/"):
-        zone_bypass_states = ["N"] * 16  # 'N' significa ativo, 'Y' significa bypass
+        # Obter estado atual das zonas em formato string (ex: "NNYYNNNNNNNNNNNN")
+        _LOGGER.debug("Entering bypass processing...")
+        current_state = bypass_states
+        _LOGGER.info("Current Zones: %s", current_state)
+
+        if not current_state or len(current_state) != 16:
+            _LOGGER.error("Failed to get current state of zones. Using default state.")
+            current_state = "N" * 16  # Caso falhe, assume tudo como ativo
+
+        # Converte o estado atual em uma lista mutável
+        zone_bypass_states = list(current_state)
         try:
             zone_id = int(topic.split("/")[-1])
         except ValueError:
@@ -339,6 +351,7 @@ def on_mqtt_message(client, userdata, msg):
             _LOGGER.error("Payload inválido para controle de bypass da zona: %s", payload)
             return
 
+        _LOGGER.info("Zones state: %s - Bypass var: %s", zone_bypass_states, bypass_states)
         # Envia o comando completo de bypass com o estado de todas as zonas
         send_rs232_command(userdata["serial_conn"], "B", 1, "".join(zone_bypass_states))
 
@@ -614,11 +627,11 @@ def listen_for_updates(serial_conn, mqtt_client):
                             # Caso o bypass das zonas seja atualizado
                             elif message_parts[1] == "B":
                                 # Mensagem de estado das zonas, por exemplo: "@I B 1 NNNNNNNNNNNNNNNN"
-                                bypass_states = message_parts[3]
+                                states = message_parts[3]
 
                                 # Processa cada caractere de estado para cada zona
-                                for zone_id in range(1, len(bypass_states) + 1):
-                                    bypass_state_char = bypass_states[zone_id - 1]  # Caractere correspondente à zona
+                                for zone_id in range(1, len(states) + 1):
+                                    bypass_state_char = states[zone_id - 1]  # Caractere correspondente à zona
                                     bypass_state = cardio2e_zones.interpret_bypass_character(bypass_state_char)
 
                                     # Publica o estado da zona no MQTT
@@ -717,6 +730,7 @@ def parse_login_response(response, mqtt_client, serial_conn):
     :param mqtt_client: Cliente MQTT para publicação.
     """
     global hvac_states
+    global bypass_states
 
     # Divide a resposta em mensagens individuais usando o delimitador '\r'
     messages = response.split("\r")
@@ -848,7 +862,7 @@ def parse_login_response(response, mqtt_client, serial_conn):
 
         elif message.startswith("@I B"):
             # Estado das zonas de bypass, onde cada caractere representa o estado de uma zona específica
-            match = re.match(r"@I B \d+ ([NO]+)", message)
+            match = re.match(r"@I B \d+ ([NY]+)", message)
             if match:
                 bypass_states = match.group(1)
                 for i, bypass_state_char in enumerate(bypass_states, start=1):
@@ -884,12 +898,14 @@ def get_entity_state(serial_conn, mqtt_client, entity_id, entity_type="L", num_z
     global hvac_states
 
     # Determina o comando com base no tipo da entidade
+    _LOGGER.debug("Entering get_entity_state function.")
     command = f"@G {entity_type} 1{CARDIO2E_TERMINATOR}" if entity_type == "Z" else f"@G {entity_type} {entity_id}{CARDIO2E_TERMINATOR}"
     attempts = 0
 
     while attempts < max_retries:
         try:
             # Enviar o comando para obter o estado da entidade
+            _LOGGER.debug("Sending command to serial: %s", command)
             serial_conn.write(command.encode())
             _LOGGER.debug("Enviado comando para obter estado da entidade %s %d: %s (tentativa %d)", entity_type, entity_id, command.strip(), attempts + 1)
 
@@ -912,7 +928,6 @@ def get_entity_state(serial_conn, mqtt_client, entity_id, entity_type="L", num_z
                 # Processa a mensagem para extrair o estado
                 message_parts = received_message.strip().split()
                 if entity_type == "L" and len(message_parts) >= 4:
-                    # Para luzes, processa normalmente
                     state_message = message_parts[3]
                     state_topic = f"cardio2e/light/state/{entity_id}"
                     state = int(state_message)
@@ -922,7 +937,6 @@ def get_entity_state(serial_conn, mqtt_client, entity_id, entity_type="L", num_z
                     return light_state
 
                 elif entity_type == "R" and len(message_parts) >= 4:
-                    # for switches, process one 
                     state_message = message_parts[3]
                     state_topic = f"cardio2e/switch/state/{entity_id}"
                     state = state_message
@@ -932,7 +946,6 @@ def get_entity_state(serial_conn, mqtt_client, entity_id, entity_type="L", num_z
                     return state
 
                 elif entity_type == "C" and len(message_parts) >= 4:
-                    # for covers, process one 
                     state_message = message_parts[3]
                     state_topic = f"cardio2e/cover/state/{entity_id}"
                     state = state_message
@@ -941,7 +954,6 @@ def get_entity_state(serial_conn, mqtt_client, entity_id, entity_type="L", num_z
                     return state
 
                 elif entity_type == "T" and len(message_parts) >= 4:
-                    # for covers, process one 
                     state_message = message_parts[3]
                     state_topic = f"cardio2e/hvac/{entity_id}/state/current_temperature"
                     state = state_message
@@ -1009,10 +1021,9 @@ def get_entity_state(serial_conn, mqtt_client, entity_id, entity_type="L", num_z
                     return zone_states  # Retorna a sequência de estados para referência
 
                 elif entity_type == "B" and len(message_parts) >= 4:
-                    # Para luzes, processa normalmente
-                    bypass_states = message_parts[3]
-                    for zone_id in range(1, min(num_zones, len(bypass_states)) + 1):
-                        bypass_state_char = bypass_states[zone_id - 1]  # Pega o caractere correspondente à zona
+                    states = message_parts[3]
+                    for zone_id in range(1, min(num_zones, len(states)) + 1):
+                        bypass_state_char = states[zone_id - 1]  # Pega o caractere correspondente à zona
                         bypass_state = cardio2e_zones.interpret_bypass_character(bypass_state_char)
                         bypass_topic = f"cardio2e/zone/bypass/state/{zone_id}"
                         mqtt_client.publish(bypass_topic, bypass_state, retain=True)
@@ -1077,7 +1088,7 @@ def cardio_login(serial_conn, mqtt_client, state="login", password="00000", max_
 
                 # Verifica se a resposta indica sucesso
                 if received_message.startswith(success_response_prefix):
-                    _LOGGER.info("%s successful with response: %s", state.capitalize(), received_message)
+                    _LOGGER.info("%s successful with response: %r", state.capitalize(), received_message)
                     
                     # Chama o parse_login_response apenas se for um login
                     if state == "login":
@@ -1087,7 +1098,7 @@ def cardio_login(serial_conn, mqtt_client, state="login", password="00000", max_
                     
                     return True
                 else:
-                    _LOGGER.warning("%s failed with response: %s", state.capitalize(), received_message)
+                    _LOGGER.warning("%s failed with response: %r", state.capitalize(), received_message)
                     break  # Falha, então sai do loop interno
 
             attempts += 1
@@ -1244,7 +1255,7 @@ def publish_autodiscovery_config(mqtt_client, entity_id, entity_name, entity_typ
             
             # Qualidade de serviço e retenção
             "qos": 1,
-            "retain": True,
+            "retain": False,
             
             # Informações do dispositivo
             "device": {
@@ -1329,7 +1340,7 @@ def publish_autodiscovery_config(mqtt_client, entity_id, entity_name, entity_typ
             "payload_on": "ON",
             "payload_off": "OFF",
             "qos": 1,
-            "retain": True,
+            "retain": False,
             "device": {
                 "identifiers": ["Cardio2e Zones"],
                 "name": "Cardio2e Zones",
