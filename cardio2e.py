@@ -382,7 +382,7 @@ def send_rs232_command(serial_conn, entity_type, entity_id, state=None, heating_
         # Verificação para garantir que todos os parâmetros necessários foram fornecidos para HVAC
         if heating_setpoint is None or cooling_setpoint is None or fan_state is None or mode is None:
             _LOGGER.error("Missing parameters for HVAC command: heating_setpoint, cooling_setpoint, fan_state, and mode are required.")
-            return
+            return False
 
         # Mapeamento do estado do ventilador e do modo para códigos RS-232
         fan_state_code = "R" if fan_state == "on" else "S"  # Exemplo: "R" para ligado e "S" para desligado
@@ -407,8 +407,10 @@ def send_rs232_command(serial_conn, entity_type, entity_id, state=None, heating_
     try:
         _LOGGER.info("Sending command to RS-232: %s", command)
         serial_conn.write(command.encode())
+        return True
     except Exception as e:
         _LOGGER.error("Error sending command to RS-232: %s", e)
+        return False
 
 # listen for cardio2e updates
 def listen_for_updates(serial_conn, mqtt_client):
@@ -426,8 +428,8 @@ def listen_for_updates(serial_conn, mqtt_client):
                 time_command = current_time.strftime("%Y%m%d%H%M%S")
 
                 # scan every cover state because cardio have some problems leading with covers
-                for entity_id in range(1, CARDIO2E_NCOVERS + 1):  
-                    get_entity_state(serial_conn, mqtt_client, entity_id, "C")
+                #for entity_id in range(1, CARDIO2E_NCOVERS + 1):  
+                #    get_entity_state(serial_conn, mqtt_client, entity_id, "C")
 
                 send_rs232_command(serial_conn, "D", time_command)
                 # clean errors after some time
