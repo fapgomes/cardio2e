@@ -325,15 +325,15 @@ def on_mqtt_message(client, userdata, msg):
     elif topic.startswith("cardio2e/zone/bypass/set/"):
         # Obter estado atual das zonas em formato string (ex: "NNYYNNNNNNNNNNNN")
         _LOGGER.debug("Entering bypass processing...")
-        current_state = bypass_states
-        _LOGGER.info("Current Zones: %s", current_state)
+        _LOGGER.info("Current Zones: %s", bypass_states)
 
-        if not current_state or len(current_state) != 16:
+        if not bypass_states or len(bypass_states) != 16:
             _LOGGER.error("Failed to get current state of zones. Using default state.")
-            current_state = "N" * 16  # Caso falhe, assume tudo como ativo
+            bypass_states = "N" * 16  # Caso falhe, assume tudo como ativo
 
         # Converte o estado atual em uma lista mutável
-        zone_bypass_states = list(current_state)
+        zone_bypass_states = list(bypass_states)
+        _LOGGER.debug("BEFORE: Zones state: %s - Bypass var: %s", zone_bypass_states, bypass_states)
         try:
             zone_id = int(topic.split("/")[-1])
         except ValueError:
@@ -351,9 +351,20 @@ def on_mqtt_message(client, userdata, msg):
             _LOGGER.error("Payload inválido para controle de bypass da zona: %s", payload)
             return
 
-        _LOGGER.info("Zones state: %s - Bypass var: %s", zone_bypass_states, bypass_states)
-        # Envia o comando completo de bypass com o estado de todas as zonas
-        send_rs232_command(userdata["serial_conn"], "B", 1, "".join(zone_bypass_states))
+        _LOGGER.debug("AFTER: Zones state: %s - Bypass var: %s", zone_bypass_states, bypass_states)
+        try:
+            # Envia o comando e verifica se foi bem-sucedido
+            success = send_rs232_command(userdata["serial_conn"], "B", 1, "".join(zone_bypass_states))
+
+            if success:
+                # Atualiza a string apenas se o comando for bem recebido
+                bypass_states = "".join(zone_bypass_states)
+                _LOGGER.info("Bypass states updated successfully: %s", bypass_states)
+            else:
+                _LOGGER.warning("Bypass command failed, state not updated.")
+
+            except Exception as e:
+                _LOGGER.error("Error sending bypass command: %s", e)
 
 def send_rs232_command(serial_conn, entity_type, entity_id, state=None, heating_setpoint=None, cooling_setpoint=None, fan_state=None, mode=None):
     """
