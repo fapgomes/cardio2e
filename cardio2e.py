@@ -104,7 +104,7 @@ bypass_states = ""
 ########
 ## SECURITY
 ########
-CARDIO2E_ALARM_CODE = int(config['cardio2e'].get('code', 11111))
+CARDIO2E_ALARM_CODE = int(config['cardio2e'].get('code', 12345))
 
 def create_shutdown_handler(serial_conn, mqtt_client):
     def handle_shutdown(signum, frame):
@@ -121,7 +121,11 @@ def create_shutdown_handler(serial_conn, mqtt_client):
 def main():
     try:
         # Configuração da conexão serial
-        serial_conn = serial.Serial(DEFAULT_SERIAL_PORT, DEFAULT_BAUDRATE, timeout=1)
+        serial_conn = serial.Serial(
+            port=DEFAULT_SERIAL_PORT, 
+            baudrate=DEFAULT_BAUDRATE, 
+            write_timeout=1,
+            timeout=1)
         _LOGGER.info("Connection to Cardio2e established on port %s", DEFAULT_SERIAL_PORT)
 
         # Configuração do cliente MQTT
@@ -407,6 +411,7 @@ def send_rs232_command(serial_conn, entity_type, entity_id, state=None, heating_
     try:
         _LOGGER.info("Sending command to RS-232: %s", command)
         serial_conn.write(command.encode())
+        serial_conn.flush()
         return True
     except Exception as e:
         _LOGGER.error("Error sending command to RS-232: %s", e)
@@ -920,7 +925,7 @@ def get_entity_state(serial_conn, mqtt_client, entity_id, entity_type="L", num_z
             # Enviar o comando para obter o estado da entidade
             _LOGGER.debug("Sending command to serial: %s", command)
             serial_conn.write(command.encode())
-            _LOGGER.debug("Enviado comando para obter estado da entidade %s %d: %s (tentativa %d)", entity_type, entity_id, command.strip(), attempts + 1)
+            _LOGGER.info("Sent command %s to get entity %s %d state (try %d / %d)", command.strip(), entity_type, entity_id, attempts + 1, max_retries)
 
             start_time = time.time()
             received_message = ""
@@ -1004,7 +1009,6 @@ def get_entity_state(serial_conn, mqtt_client, entity_id, entity_type="L", num_z
                     # update global hvac global var
                     hvac_states = cardio2e_hvac.update_hvac_state(mqtt_client, hvac_states, int(entity_id), "mode", mode_state)
                     _LOGGER.info("Mode for %d state published on MQTT: %s", entity_id, mode_state)
-
                     return True
 
                 elif entity_type == "S" and len(message_parts) >= 4:
