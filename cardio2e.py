@@ -167,6 +167,7 @@ def on_mqtt_connect(client, userdata, flags, rc):
     client.subscribe("cardio2e/light/set/#")
     client.subscribe("cardio2e/switch/set/#")
     client.subscribe("cardio2e/cover/set/#")
+    client.subscribe("cardio2e/cover/command/#")
     client.subscribe("cardio2e/hvac/+/set/#")  # Subscreve dinamicamente a qualquer hvac_id
     client.subscribe("cardio2e/alarm/set/#")
     client.subscribe("cardio2e/zone/bypass/set/#")
@@ -246,6 +247,29 @@ def on_mqtt_message(client, userdata, msg):
             return
 
         # Envia comando para definir a posição do estore no RS-232
+        send_rs232_command(userdata["serial_conn"], "C", cover_id, position)
+
+    elif topic.startswith("cardio2e/cover/command/"):
+        try:
+            cover_id = int(topic.split("/")[-1])
+        except ValueError:
+            _LOGGER.error("Topic invalid Cover ID: %s", topic)
+            return
+
+        # Verifica se o payload é um comando válido
+        command = payload.upper()
+        if command == "OPEN":
+            position = 100
+        elif command == "CLOSE":
+            position = 0
+        elif command == "STOP":
+            # Obtém a posição atual do estore antes de enviar o comando STOP
+            position = get_entity_state(userdata["serial_conn"], client, cover_id, "C")
+        else:
+            _LOGGER.error("Comando inválido recebido: %s", command)
+            return
+
+        # Envia o comando correspondente
         send_rs232_command(userdata["serial_conn"], "C", cover_id, position)
 
     # Check if the message is for HVAC
@@ -423,6 +447,7 @@ def listen_for_updates(serial_conn, mqtt_client):
     last_time_sent = None  # Variável para armazenar o último horário de envio
 
     while True:
+        time.sleep(0.3)
         if not serial_conn.is_open:
             _LOGGER.debug("The serial connection was closed.")
             break
@@ -1210,14 +1235,19 @@ def publish_autodiscovery_config(mqtt_client, entity_id, entity_name, entity_typ
         cover_config_topic = f"homeassistant/cover/cardio2e_cover_{entity_id}/config"
         position_topic = f"cardio2e/cover/state/{entity_id}"
         set_position_topic = f"cardio2e/cover/set/{entity_id}"
+        command_topic = f"cardio2e/cover/command/{entity_id}"  # Tópico para comandos open/close/stop
 
         cover_config_payload = {
             "name": f"{entity_name}",
             "unique_id": f"cardio2e_cover_{entity_id}",
             "position_topic": position_topic,       # Mesma posição do estado para compatibilidade
             "set_position_topic": set_position_topic, # Tópico para definir a posição
-            "payload_open": "100",
-            "payload_closed": "0",
+            "command_topic": command_topic, # Tópico para comandos de abrir/fechar/parar
+            "payload_open": "OPEN",
+            "payload_close": "CLOSE",
+            "payload_stop": "STOP",
+            "position_open": 100,
+            "position_closed": 0,
             "optimistic": False,
             "qos": 1,
             "retain": False,
