@@ -263,6 +263,9 @@ def on_mqtt_message(client, userdata, msg):
         elif command == "CLOSE":
             position = 0
         elif command == "STOP":
+            # envio ficticio apenas para parar o cover
+            send_rs232_command(userdata["serial_conn"], "C", cover_id, 50)
+            time.sleep(1)
             # Obtém a posição atual do estore antes de enviar o comando STOP
             position = get_entity_state(userdata["serial_conn"], client, cover_id, "C")
         else:
