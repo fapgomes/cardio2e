@@ -475,7 +475,7 @@ def listen_for_updates(serial_conn, mqtt_client):
                 # Ler a linha recebida do RS-232
                 received_message = serial_conn.readline().decode().strip()
                 if received_message:
-                    _LOGGER.debug("RS-232 message received: %s", received_message)
+                    _LOGGER.info("RS-232 message received: %s", received_message)
 
                     # Dividir a linha em mensagens separadas (caso múltiplas mensagens estejam na mesma linha)
                     #messages = received_message.split('@')
@@ -521,7 +521,7 @@ def listen_for_updates(serial_conn, mqtt_client):
                                 #get_entity_state(serial_conn, mqtt_client, cover_id, "C")
                                 _LOGGER.info("OK for action cover: %s", cover_id)
                             elif message_parts[1] == "S":
-                                # Comando para controle de luz "@A S <security_id>"
+                                # security command "@A S <security_id>"
                                 security_id = int(message_parts[2])
                                 # Consultar o estado atual e publicar no MQTT
                                 #get_entity_state(serial_conn, mqtt_client, security_id, "S")
@@ -531,31 +531,31 @@ def listen_for_updates(serial_conn, mqtt_client):
                                 get_entity_state(serial_conn, mqtt_client, 1, "B")
                                 _LOGGER.info("Bypass zones re-publish.")
                         elif len(message_parts) >= 3 and message_parts[0] == "@N":
-                            error_msg = ""
+                            error_msg = f"@N {message_parts[1]} {message_parts[2]} {message_parts[3]}"
                             if (message_parts[3] == "1"):
-                                error_msg = "Object type specified by the transaction is not recognized."
+                                error_msg = f"Object type specified by the transaction is not recognized: {error_msg}"
                             elif (message_parts[3] == "2"):
-                                error_msg = "Object number is out of range for the object type specified."
+                                error_msg = f"Object number is out of range for the object type specified: {error_msg}"
                             elif (message_parts[3] == "3"):
-                                error_msg = "One or more parameters are not valid."
+                                error_msg = f"One or more parameters are not valid: {error_msg}"
                             elif (message_parts[3] == "4"):
-                                error_msg = "Security code is not valid."
+                                error_msg = f"Security code is not valid: {error_msg}"
                             elif (message_parts[3] == "5"):
-                                error_msg = "Transaction S (Set) not supported for the requested type of object."
+                                error_msg = f"Transaction S (Set) not supported for the requested type of object: {error_msg}"
                             elif (message_parts[3] == "6"):
-                                error_msg = "Transaction G (Get) not supported for the requested type of object."
+                                error_msg = f"Transaction G (Get) not supported for the requested type of object: {error_msg}"
                             elif (message_parts[3] == "7"):
-                                error_msg = "Transaction is refused because security is armed."
+                                error_msg = f"Transaction is refused because security is armed: {error_msg}"
                             elif (message_parts[3] == "8"):
-                                error_msg = "This zone can be ignored."
+                                error_msg = f"This zone can be ignored: {error_msg}"
                             elif (message_parts[3] == "16"):
-                                error_msg = "Security can not be armed because there are open zones."
+                                error_msg = f"Security can not be armed because there are open zones: {error_msg}"
                             elif (message_parts[3] == "17"):
-                                error_msg = "Security can not be armed because there is a power problem."
+                                error_msg = f"Security can not be armed because there is a power problem: {error_msg}"
                             elif (message_parts[3] == "18"):
-                                error_msg = "Security can not be armed for an unknown reason."
+                                error_msg = f"Security can not be armed for an unknown reason: {error_msg}"
                             else:
-                                error_msg = "Unkown error message."
+                                error_msg = f"Unkown error message ({message_parts[3]}): {error_msg}"
                             cardio2e_errors.report_error_state(mqtt_client, error_msg)
                             _LOGGER.info("\n#######\nNACK from cardio with transaction %s: %s", msg, error_msg)
                             
