@@ -154,7 +154,7 @@ def main():
 
         # Mantém o programa principal ativo
         while True:
-            time.sleep(1)
+            time.sleep(0.1)
 
     except Exception as e:
         _LOGGER.error("Falha ao configurar Cardio2e: %s", e)
@@ -450,7 +450,7 @@ def listen_for_updates(serial_conn, mqtt_client):
     last_time_sent = None  # Variável para armazenar o último horário de envio
 
     while True:
-        time.sleep(0.3)
+        time.sleep(0.1)
         if not serial_conn.is_open:
             _LOGGER.debug("The serial connection was closed.")
             break
@@ -480,6 +480,8 @@ def listen_for_updates(serial_conn, mqtt_client):
                     # Dividir a linha em mensagens separadas (caso múltiplas mensagens estejam na mesma linha)
                     #messages = received_message.split('@')
                     # Dividir a linha em mensagens separadas com '@' e '\r' (#015) como delimitadores
+                    # Substitui #015 por \r na mensagem recebida
+                    received_message = received_message.replace('#015', '\r')
                     messages = []
                     for part in received_message.split('@'):
                         sub_parts = part.split('\r')
