@@ -1,0 +1,107 @@
+"""Configuration loading and application state for cardio2e."""
+
+import ast
+import configparser
+import logging
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _parse_list_config(raw_value, field_name):
+    """Parse a list value from config, returning list of ints."""
+    try:
+        result = ast.literal_eval(raw_value)
+        if not isinstance(result, list):
+            raise ValueError("%s must be a list." % field_name)
+        return [int(item) for item in result]
+    except (ValueError, SyntaxError) as e:
+        _LOGGER.error("Error interpreting %s in config file: %s", field_name, e)
+        return []
+
+
+class AppConfig(object):
+    """All configuration parameters loaded from the .conf file."""
+
+    def __init__(self, **kwargs):
+        # Global
+        self.debug = kwargs.get("debug", 0)
+        self.ha_discover_prefix = kwargs.get("ha_discover_prefix", "homeassistant")
+
+        # Cardio2e
+        self.serial_port = kwargs.get("serial_port", "/dev/ttyUSB0")
+        self.baudrate = kwargs.get("baudrate", 9600)
+        self.password = kwargs.get("password", "00000")
+        self.update_date_interval = kwargs.get("update_date_interval", 3600)
+
+        # Lights
+        self.fetch_light_names = kwargs.get("fetch_light_names", True)
+        self.dimmer_lights = kwargs.get("dimmer_lights", [])
+        self.force_include_lights = kwargs.get("force_include_lights", [])
+
+        # Switches
+        self.fetch_switch_names = kwargs.get("fetch_switch_names", True)
+
+        # Covers
+        self.fetch_cover_names = kwargs.get("fetch_cover_names", True)
+        self.skip_init_cover_state = kwargs.get("skip_init_cover_state", False)
+        self.ncovers = kwargs.get("ncovers", 20)
+
+        # HVAC
+        self.fetch_names_hvac = kwargs.get("fetch_names_hvac", True)
+
+        # Security
+        self.alarm_code = kwargs.get("alarm_code", 12345)
+
+        # Zones
+        self.fetch_zone_names = kwargs.get("fetch_zone_names", True)
+        self.zones_normal_as_off = kwargs.get("zones_normal_as_off", [])
+
+        # MQTT
+        self.mqtt_address = kwargs.get("mqtt_address", "localhost")
+        self.mqtt_port = kwargs.get("mqtt_port", 1883)
+        self.mqtt_username = kwargs.get("mqtt_username", "")
+        self.mqtt_password = kwargs.get("mqtt_password", "")
+
+
+class AppState(object):
+    """Mutable application state (replaces global variables)."""
+    def __init__(self):
+        self.hvac_states = {}
+        self.bypass_states = ""
+
+
+def load_config(path="cardio2e.conf"):
+    """Parse the .conf file and return an AppConfig instance."""
+    config = configparser.ConfigParser()
+    files_read = config.read(path)
+    if not files_read:
+        raise RuntimeError("Config file not found or not readable: %s" % path)
+    _LOGGER.info("Config loaded from: %s, sections: %s", path, config.sections())
+
+    c2e = config["cardio2e"]
+    mqtt = config["mqtt"]
+    glb = config["global"]
+
+    return AppConfig(
+        debug=int(glb.get("debug", "0")),
+        ha_discover_prefix=glb.get("ha_discover_prefix", "homeassistant"),
+        serial_port=c2e.get("serial_port", "/dev/ttyUSB0"),
+        baudrate=int(c2e.get("baudrate", "9600")),
+        password=c2e["password"],
+        update_date_interval=int(c2e.get("update_date_interval", "3600")),
+        fetch_light_names=c2e.get("fetch_light_names", "true").lower() == "true",
+        dimmer_lights=_parse_list_config(c2e.get("dimmer_lights", "[]"), "dimmer_lights"),
+        force_include_lights=_parse_list_config(c2e.get("force_include_lights", "[]"), "force_include_lights"),
+        fetch_switch_names=c2e.get("fetch_switch_names", "true").lower() == "true",
+        fetch_cover_names=c2e.get("fetch_cover_names", "true").lower() == "true",
+        skip_init_cover_state=c2e.get("skip_init_cover_state", "false").lower() == "true",
+        ncovers=int(c2e.get("ncovers", "20")),
+        fetch_names_hvac=c2e.get("fetch_names_hvac", "true").lower() == "true",
+        alarm_code=int(c2e.get("code", "12345")),
+        fetch_zone_names=c2e.get("fetch_zone_names", "true").lower() == "true",
+        zones_normal_as_off=_parse_list_config(c2e.get("zones_normal_as_off", "[]"), "zones_normal_as_off"),
+        mqtt_address=mqtt["address"],
+        mqtt_port=int(mqtt["port"]),
+        mqtt_username=mqtt["username"],
+        mqtt_password=mqtt["password"],
+    )
