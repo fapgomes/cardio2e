@@ -3,7 +3,7 @@
 import logging
 import threading
 
-from .cardio2e_serial import send_command, query_state
+from .cardio2e_serial import send_command
 
 _LOGGER = logging.getLogger(__name__)
 
