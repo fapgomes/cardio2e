@@ -202,7 +202,7 @@ def main():
             # Login and initialize (populates all entity states)
             _do_login_and_init(serial_conn, mqtt_client, cfg, app_state)
 
-            _LOGGER.info("HVAC states after login/init: %s", app_state.hvac_states)
+            _LOGGER.debug("HVAC states after login/init: %s", app_state.hvac_states)
 
             # Now subscribe to command topics (states are populated, safe to receive commands)
             subscribe_after_init(mqtt_client)

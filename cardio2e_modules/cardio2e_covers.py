@@ -2,7 +2,6 @@
 
 import logging
 import threading
-import time
 
 from .cardio2e_serial import send_command, query_state
 

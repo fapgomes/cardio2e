@@ -133,7 +133,7 @@ def _on_message(client, userdata, msg):
         cardio2e_covers.handle_command(serial_conn, client, topic, payload, get_entity_state_fn)
 
     elif topic.startswith("cardio2e/hvac/") and "/set/" in topic:
-        _LOGGER.info("HVAC MQTT command received - topic: %s, payload: %s, retain: %s", topic, payload, msg.retain)
+        _LOGGER.debug("HVAC MQTT command received - topic: %s, payload: %s, retain: %s", topic, payload, msg.retain)
         cardio2e_hvac.handle_set_command(serial_conn, client, topic, payload, app_state)
 
     elif topic.startswith("cardio2e/alarm/set/"):
