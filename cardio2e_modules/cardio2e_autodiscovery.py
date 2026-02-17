@@ -113,7 +113,6 @@ def _hvac_config(entity_id, entity_name):
     config_payload = {
         "name": entity_name,
         "unique_id": f"cardio2e_hvac_{entity_id}",
-        "state_topic": state_topic_base,
         "current_temperature_topic": f"{state_topic_base}/current_temperature",
         "temperature_state_topic": f"{state_topic_base}/cooling_setpoint",
         "temperature_command_topic": f"{command_topic_base}/cooling_setpoint",

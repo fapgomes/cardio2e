@@ -10,7 +10,7 @@ import serial
 
 from cardio2e_modules.cardio2e_config import load_config, AppState
 from cardio2e_modules.cardio2e_constants import AVAILABILITY_TOPIC, PAYLOAD_NOT_AVAILABLE
-from cardio2e_modules.cardio2e_mqtt import create_mqtt_client, publish_available, publish_not_available
+from cardio2e_modules.cardio2e_mqtt import create_mqtt_client, publish_available, publish_not_available, subscribe_after_init
 from cardio2e_modules.cardio2e_serial import login, logout
 from cardio2e_modules.cardio2e_listener import listen_for_updates, _get_entity_state
 from cardio2e_modules.cardio2e_autodiscovery import publish_config as publish_autodiscovery_config
@@ -199,8 +199,13 @@ def main():
 
                 mqtt_client = create_mqtt_client(cfg, serial_conn, app_state, _get_entity_state_fn)
 
-            # Login and initialize
+            # Login and initialize (populates all entity states)
             _do_login_and_init(serial_conn, mqtt_client, cfg, app_state)
+
+            _LOGGER.info("HVAC states after login/init: %s", app_state.hvac_states)
+
+            # Now subscribe to command topics (states are populated, safe to receive commands)
+            subscribe_after_init(mqtt_client)
 
             _LOGGER.info("\n################\nCardio2e ready. Listening for events.\n################")
 

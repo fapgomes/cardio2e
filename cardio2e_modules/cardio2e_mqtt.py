@@ -36,6 +36,7 @@ def create_mqtt_client(config, serial_conn, app_state, get_entity_state_fn):
         "config": config,
         "app_state": app_state,
         "get_entity_state_fn": get_entity_state_fn,
+        "init_complete": False,
     })
 
     client.on_connect = _on_connect
@@ -69,7 +70,15 @@ def _on_connect(client, userdata, flags, rc):
     # Publish availability on (re)connect
     publish_available(client)
 
-    # (Re)subscribe to all necessary topics
+    # Only subscribe if init is complete (login done, states populated)
+    if userdata.get("init_complete", False):
+        _subscribe_all(client)
+    else:
+        _LOGGER.info("MQTT connected, waiting for init to complete before subscribing.")
+
+
+def _subscribe_all(client):
+    """Subscribe to all command topics."""
     client.subscribe("cardio2e/light/set/#")
     client.subscribe("cardio2e/switch/set/#")
     client.subscribe("cardio2e/cover/set/#")
@@ -77,8 +86,14 @@ def _on_connect(client, userdata, flags, rc):
     client.subscribe("cardio2e/hvac/+/set/#")
     client.subscribe("cardio2e/alarm/set/#")
     client.subscribe("cardio2e/zone/bypass/set/#")
-
     _LOGGER.info("Subscribed to all necessary topics.")
+
+
+def subscribe_after_init(mqtt_client):
+    """Call after login/init is complete to start receiving commands."""
+    userdata = mqtt_client._userdata
+    userdata["init_complete"] = True
+    _subscribe_all(mqtt_client)
 
 
 def _on_disconnect(client, userdata, rc):
@@ -98,6 +113,11 @@ def _on_message(client, userdata, msg):
 
     topic = msg.topic
     payload = msg.payload.decode().upper()
+
+    if msg.retain:
+        _LOGGER.debug("Ignoring retained message on topic %s: %s", topic, payload)
+        return
+
     _LOGGER.debug("Message received on topic %s: %s", topic, payload)
 
     if topic.startswith("cardio2e/light/set/"):
@@ -113,6 +133,7 @@ def _on_message(client, userdata, msg):
         cardio2e_covers.handle_command(serial_conn, client, topic, payload, get_entity_state_fn)
 
     elif topic.startswith("cardio2e/hvac/") and "/set/" in topic:
+        _LOGGER.info("HVAC MQTT command received - topic: %s, payload: %s, retain: %s", topic, payload, msg.retain)
         cardio2e_hvac.handle_set_command(serial_conn, client, topic, payload, app_state)
 
     elif topic.startswith("cardio2e/alarm/set/"):

@@ -68,7 +68,7 @@ class AppConfig(object):
 class AppState(object):
     """Mutable application state (replaces global variables). Thread-safe."""
     def __init__(self):
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._hvac_states = {}
         self._bypass_states = ""
         # Diagnostics counters (atomic increments via lock)

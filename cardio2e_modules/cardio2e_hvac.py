@@ -2,7 +2,6 @@
 
 import logging
 import re
-
 from .cardio2e_constants import (
     HVAC_CODE_TO_MODE,
     FAN_CODE_TO_STATE,
@@ -11,6 +10,7 @@ from .cardio2e_constants import (
 from .cardio2e_serial import send_command
 
 _LOGGER = logging.getLogger(__name__)
+
 
 
 def initialize_hvac_state(hvac_states, hvac_id, heating_setpoint, cooling_setpoint, fan_state, system_mode):
@@ -52,20 +52,18 @@ def handle_set_command(serial_conn, mqtt_client, topic, payload, app_state):
 
         with app_state.lock:
             hvac_states = app_state.hvac_states
+            _LOGGER.info("HVAC %d current state before command: %s", hvac_id, hvac_states.get(hvac_id, "NOT FOUND"))
 
-            required_keys = ["heating_setpoint", "cooling_setpoint", "fan_state", "mode"]
-            for key in required_keys:
-                if key not in hvac_states.get(hvac_id, {}):
-                    if hvac_id not in hvac_states:
-                        hvac_states[hvac_id] = {}
-                    hvac_states[hvac_id][key] = 0 if "setpoint" in key else "off"
+            if hvac_id not in hvac_states or "cooling_setpoint" not in hvac_states.get(hvac_id, {}):
+                _LOGGER.warning("HVAC %d state not yet initialized by login. Ignoring command.", hvac_id)
+                return
 
             if setting_type == "heating_setpoint":
                 hvac_states[hvac_id]["heating_setpoint"] = float(payload)
             elif setting_type == "cooling_setpoint":
                 hvac_states[hvac_id]["cooling_setpoint"] = float(payload)
             elif setting_type == "fan":
-                hvac_states[hvac_id]["fan_state"] = payload.lower()
+                hvac_states[hvac_id]["fan"] = payload.lower()
             elif setting_type == "mode":
                 hvac_states[hvac_id]["mode"] = payload.lower()
             else:
@@ -74,7 +72,7 @@ def handle_set_command(serial_conn, mqtt_client, topic, payload, app_state):
 
             heating_setpoint = float(hvac_states[hvac_id]["cooling_setpoint"]) - 2
             cooling_setpoint = float(hvac_states[hvac_id]["cooling_setpoint"])
-            fan_state = hvac_states[hvac_id]["fan_state"]
+            fan_state = hvac_states[hvac_id]["fan"]
             mode = hvac_states[hvac_id]["mode"]
 
             app_state.hvac_states = hvac_states
@@ -93,7 +91,7 @@ def handle_set_command(serial_conn, mqtt_client, topic, payload, app_state):
             hvac_states = app_state.hvac_states
             hvac_states = update_hvac_state(mqtt_client, hvac_states, int(hvac_id), "heating_setpoint", heating_setpoint)
             hvac_states = update_hvac_state(mqtt_client, hvac_states, int(hvac_id), "cooling_setpoint", cooling_setpoint)
-            hvac_states = update_hvac_state(mqtt_client, hvac_states, int(hvac_id), "fan_state", fan_state)
+            hvac_states = update_hvac_state(mqtt_client, hvac_states, int(hvac_id), "fan", fan_state)
             hvac_states = update_hvac_state(mqtt_client, hvac_states, int(hvac_id), "mode", mode)
             app_state.hvac_states = hvac_states
 
