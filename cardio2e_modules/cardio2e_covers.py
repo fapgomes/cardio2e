@@ -75,16 +75,17 @@ def handle_command(serial_conn, mqtt_client, topic, payload, get_entity_state_fn
 
 
 def _stop_cover(serial_conn, mqtt_client, cover_id, get_entity_state_fn):
-    """Stop a cover and query its actual position (runs in its own thread)."""
+    """Stop a cover by querying its actual position and re-sending it."""
     try:
-        # Send a dummy position to trigger stop
-        send_command(serial_conn, "C", cover_id, 50)
-        time.sleep(1)
-        # Query actual position after stop
+        # Query actual position first (serial lock prevents listener contention)
         position = get_entity_state_fn(serial_conn, mqtt_client, cover_id, "C")
         if position is not None:
             send_command(serial_conn, "C", cover_id, position)
-        _LOGGER.info("Cover %d stopped at position: %s", cover_id, position)
+            _LOGGER.info("Cover %d stopped at position: %s", cover_id, position)
+        else:
+            # Fallback: send dummy position to at least trigger a stop
+            send_command(serial_conn, "C", cover_id, 50)
+            _LOGGER.warning("Cover %d: could not query position, sent dummy 50 to stop.", cover_id)
     except Exception as e:
         _LOGGER.error("Error stopping cover %d: %s", cover_id, e)
 
