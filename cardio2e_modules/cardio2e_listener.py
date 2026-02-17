@@ -6,7 +6,7 @@ import logging
 import re
 import time
 
-from .cardio2e_serial import send_date, query_state
+from .cardio2e_serial import send_date, query_state, _serial_lock
 from . import (
     cardio2e_errors,
     cardio2e_lights,
@@ -96,12 +96,13 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state):
                 _publish_heartbeat(mqtt_client, app_state)
                 last_heartbeat = now
 
-            # Read all available bytes at once
-            waiting = serial_conn.in_waiting
-            if waiting > 0:
-                raw = serial_conn.read(waiting).decode(errors="ignore")
-                buffer += raw
-            else:
+            # Read all available bytes at once (under serial lock)
+            with _serial_lock:
+                waiting = serial_conn.in_waiting
+                if waiting > 0:
+                    raw = serial_conn.read(waiting).decode(errors="ignore")
+                    buffer += raw
+            if not waiting:
                 time.sleep(0.01)
                 continue
 
@@ -193,6 +194,8 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
             cardio2e_covers.process_update(mqtt_client, message_parts)
         elif entity_type == "H":
             cardio2e_hvac.process_update(mqtt_client, message_parts)
+        elif entity_type == "T":
+            cardio2e_hvac.process_temp_update(mqtt_client, message_parts, app_state)
         elif entity_type == "S":
             cardio2e_security.process_update(mqtt_client, message_parts)
         elif entity_type == "Z":

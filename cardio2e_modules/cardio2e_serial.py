@@ -1,6 +1,11 @@
-"""RS-232 serial communication layer for cardio2e."""
+"""RS-232 serial communication layer for cardio2e.
+
+All serial read/write operations go through a global lock to prevent
+contention between the listener thread and MQTT callback thread.
+"""
 
 import logging
+import threading
 import time
 
 from .cardio2e_constants import (
@@ -10,6 +15,9 @@ from .cardio2e_constants import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Global serial lock - prevents interleaved reads/writes from multiple threads
+_serial_lock = threading.Lock()
 
 
 def send_command(serial_conn, entity_type, entity_id, state=None,
@@ -36,59 +44,81 @@ def send_command(serial_conn, entity_type, entity_id, state=None,
             command = f"@S {entity_type} {entity_id} {state}{CARDIO2E_TERMINATOR}"
 
     try:
-        _LOGGER.info("Sending command to RS-232: %s", command)
-        serial_conn.write(command.encode())
-        serial_conn.flush()
+        with _serial_lock:
+            _LOGGER.info("Sending command to RS-232: %s", command)
+            serial_conn.write(command.encode())
+            serial_conn.flush()
         return True
     except Exception as e:
         _LOGGER.error("Error sending command to RS-232: %s", e)
         return False
 
 
+def _read_until_match(serial_conn, prefix, timeout, ignore_fn=None):
+    """
+    Read from serial until a line starting with prefix is found.
+    Returns the matching line (stripped) or None on timeout.
+    Lines that don't match are passed to ignore_fn if provided.
+    Must be called with _serial_lock held.
+    """
+    start_time = time.time()
+    buffer = ""
+
+    while time.time() - start_time < timeout:
+        waiting = serial_conn.in_waiting
+        if waiting > 0:
+            buffer += serial_conn.read(waiting).decode(errors="ignore")
+            while "\r" in buffer or "\n" in buffer:
+                cr = buffer.find("\r")
+                lf = buffer.find("\n")
+                if cr == -1:
+                    pos = lf
+                elif lf == -1:
+                    pos = cr
+                else:
+                    pos = min(cr, lf)
+                line = buffer[:pos].strip()
+                rest = buffer[pos + 1:]
+                if rest and rest[0] in ("\r", "\n"):
+                    rest = rest[1:]
+                buffer = rest
+
+                if not line:
+                    continue
+                if line.startswith(prefix):
+                    return line
+                else:
+                    if ignore_fn:
+                        ignore_fn(line)
+                    _LOGGER.debug("Message ignored while waiting for %s: %s", prefix, line)
+        else:
+            time.sleep(0.005)
+
+    return None
+
+
 def query_name(serial_conn, entity_id, entity_type, max_retries=3, timeout=10):
     """
     Query the name of an entity via RS-232.
-    Returns (entity_id_from_response, entity_name) or None on failure.
+    Returns entity_name string or None on failure.
     """
     command = f"@G N {entity_type} {entity_id}{CARDIO2E_TERMINATOR}"
-    attempts = 0
-
     expected_prefix = f"@I N {entity_type}"
+    attempts = 0
 
     while attempts < max_retries:
         try:
-            serial_conn.write(command.encode())
-            _LOGGER.debug("Command sent to get entity name %s %d: %s", entity_type, entity_id, command.strip())
+            with _serial_lock:
+                serial_conn.write(command.encode())
+                _LOGGER.debug("Command sent to get entity name %s %d: %s", entity_type, entity_id, command.strip())
 
-            start_time = time.time()
-            buffer = ""
+                line = _read_until_match(serial_conn, expected_prefix, timeout)
 
-            while time.time() - start_time < timeout:
-                waiting = serial_conn.in_waiting
-                if waiting > 0:
-                    buffer += serial_conn.read(waiting).decode(errors="ignore")
-                    # Process complete lines
-                    while "\r" in buffer or "\n" in buffer:
-                        cr = buffer.find("\r")
-                        lf = buffer.find("\n")
-                        if cr == -1:
-                            pos = lf
-                        elif lf == -1:
-                            pos = cr
-                        else:
-                            pos = min(cr, lf)
-                        line = buffer[:pos].strip()
-                        buffer = buffer[pos + 1:].lstrip("\r\n")
-
-                        if line.startswith(expected_prefix):
-                            _LOGGER.debug("Complete message received for entity name %s %d: %s", entity_type, entity_id, line)
-                            name_part = line.split(expected_prefix, 1)[-1].strip()
-                            entity_name = name_part.split("@")[0].strip()
-                            return entity_name
-                        elif line:
-                            _LOGGER.debug("Message ignored during name search: %s", line)
-                else:
-                    time.sleep(0.005)
+            if line:
+                _LOGGER.debug("Complete message received for entity name %s %d: %s", entity_type, entity_id, line)
+                name_part = line.split(expected_prefix, 1)[-1].strip()
+                entity_name = name_part.split("@")[0].strip()
+                return entity_name
 
             attempts += 1
             _LOGGER.debug("Attempt %d failed to get the name of entity %s %d. Trying again.", attempts, entity_type, entity_id)
@@ -112,28 +142,15 @@ def query_state(serial_conn, entity_id, entity_type, timeout=0.5, max_retries=5)
 
     while attempts < max_retries:
         try:
-            serial_conn.write(command.encode())
-            _LOGGER.info("Sent command %s to get entity %s %d state (try %d / %d)", command.strip(), entity_type, entity_id, attempts + 1, max_retries)
+            with _serial_lock:
+                serial_conn.write(command.encode())
+                _LOGGER.info("Sent command %s to get entity %s %d state (try %d / %d)", command.strip(), entity_type, entity_id, attempts + 1, max_retries)
 
-            start_time = time.time()
-            buffer = ""
+                line = _read_until_match(serial_conn, expected_prefix, timeout)
 
-            while time.time() - start_time < timeout:
-                waiting = serial_conn.in_waiting
-                if waiting > 0:
-                    buffer += serial_conn.read(waiting).decode(errors="ignore")
-                    # Check for complete message (terminated by \r or \n)
-                    for terminator in ("\r", "\n"):
-                        if terminator in buffer:
-                            line, buffer = buffer.split(terminator, 1)
-                            line = line.strip()
-                            if line.startswith(expected_prefix):
-                                _LOGGER.debug("Message received: %s", line)
-                                return line.split()
-                            elif line:
-                                _LOGGER.debug("Message ignored: %s", line)
-                else:
-                    time.sleep(0.005)
+            if line:
+                _LOGGER.debug("Message received: %s", line)
+                return line.split()
 
             _LOGGER.warning("Incorrect answer for entity %s %d, attempt %d by %d.", entity_type, entity_id, attempts + 1, max_retries)
             attempts += 1
@@ -159,24 +176,22 @@ def login(serial_conn, password, max_retries=5, timeout=10):
 
     while attempts < max_retries:
         try:
-            serial_conn.write(command.encode())
-            _LOGGER.debug("Login command sent: %s", command.strip())
+            with _serial_lock:
+                serial_conn.write(command.encode())
+                _LOGGER.debug("Login command sent: %s", command.strip())
 
-            start_time = time.time()
-            buffer = ""
+                start_time = time.time()
+                buffer = ""
 
-            while time.time() - start_time < timeout:
-                waiting = serial_conn.in_waiting
-                if waiting > 0:
-                    buffer += serial_conn.read(waiting).decode(errors="ignore")
-                    # Look for the success prefix in any complete line
-                    if success_response_prefix in buffer:
-                        # Return the whole buffer as the login response
-                        # (contains all @I state messages)
-                        _LOGGER.info("Login successful with response length: %d", len(buffer))
-                        return buffer
-                else:
-                    time.sleep(0.01)
+                while time.time() - start_time < timeout:
+                    waiting = serial_conn.in_waiting
+                    if waiting > 0:
+                        buffer += serial_conn.read(waiting).decode(errors="ignore")
+                        if success_response_prefix in buffer:
+                            _LOGGER.info("Login successful with response length: %d", len(buffer))
+                            return buffer
+                    else:
+                        time.sleep(0.01)
 
             if buffer:
                 _LOGGER.warning("Login response did not contain success prefix. Got: %r", buffer[:200])
@@ -195,7 +210,8 @@ def logout(serial_conn):
     """Perform logout via RS-232."""
     command = f"@S P O{CARDIO2E_TERMINATOR}"
     try:
-        serial_conn.write(command.encode())
+        with _serial_lock:
+            serial_conn.write(command.encode())
         _LOGGER.info("Logout command sent; no response required.")
         return True
     except Exception as e:
