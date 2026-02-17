@@ -1,6 +1,7 @@
 """Serial listener loop and message dispatcher for cardio2e."""
 
 import datetime
+import json
 import logging
 import re
 import time
@@ -22,23 +23,67 @@ from .cardio2e_constants import (
     SECURITY_CODE_TO_STATE,
     SWITCH_CODE_TO_STATE,
     TEMP_CODE_TO_STATUS,
+    AVAILABILITY_TOPIC,
+    PAYLOAD_AVAILABLE,
+    PAYLOAD_NOT_AVAILABLE,
+    DEVICE_INFO,
 )
 
+HEARTBEAT_INTERVAL = 30  # seconds
+
 _LOGGER = logging.getLogger(__name__)
+
+
+def _publish_heartbeat(mqtt_client, app_state):
+    """Publish heartbeat and diagnostics to MQTT."""
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    mqtt_client.publish("cardio2e/heartbeat", timestamp, retain=False)
+
+    diag = app_state.get_diagnostics()
+    diag["timestamp"] = timestamp
+    mqtt_client.publish("cardio2e/diagnostics/state", json.dumps(diag), retain=True)
+    _LOGGER.debug("Heartbeat published: %s", timestamp)
+
+
+def _publish_diagnostics_autodiscovery(mqtt_client):
+    """Publish autodiscovery config for the diagnostics sensor."""
+    config_topic = "homeassistant/sensor/cardio2e_diagnostics/config"
+    config_payload = {
+        "name": "Cardio2e Diagnostics",
+        "unique_id": "cardio2e_diagnostics",
+        "state_topic": "cardio2e/diagnostics/state",
+        "icon": "mdi:heart-pulse",
+        "qos": 1,
+        "retain": True,
+        "value_template": "{{ value_json.uptime_seconds }}",
+        "unit_of_measurement": "s",
+        "json_attributes_topic": "cardio2e/diagnostics/state",
+        "availability_topic": AVAILABILITY_TOPIC,
+        "payload_available": PAYLOAD_AVAILABLE,
+        "payload_not_available": PAYLOAD_NOT_AVAILABLE,
+        "device": DEVICE_INFO["errors"],
+    }
+    mqtt_client.publish(config_topic, json.dumps(config_payload), retain=True)
+    _LOGGER.info("Published autodiscovery config for diagnostics sensor.")
 
 
 def listen_for_updates(serial_conn, mqtt_client, config, app_state):
     """Listen for RS-232 updates and dispatch to entity handlers."""
     last_time_sent = time.monotonic()
+    last_heartbeat = time.monotonic()
     buffer = ""
+
+    # Publish diagnostics autodiscovery on start
+    _publish_diagnostics_autodiscovery(mqtt_client)
 
     while True:
         if not serial_conn.is_open:
             _LOGGER.debug("The serial connection was closed.")
             break
         try:
-            # Send date periodically (cheap monotonic check)
             now = time.monotonic()
+
+            # Send date periodically
             if (now - last_time_sent) >= config.update_date_interval:
                 time_command = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
                 send_date(serial_conn, time_command)
@@ -46,8 +91,12 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state):
                 _LOGGER.info("Sent time command to cardio2e: %s", time_command)
                 last_time_sent = now
 
-            # Read all available bytes at once (avoids readline's 1s timeout
-            # waiting for \n when cardio2e terminates with \r)
+            # Publish heartbeat + diagnostics periodically
+            if (now - last_heartbeat) >= HEARTBEAT_INTERVAL:
+                _publish_heartbeat(mqtt_client, app_state)
+                last_heartbeat = now
+
+            # Read all available bytes at once
             waiting = serial_conn.in_waiting
             if waiting > 0:
                 raw = serial_conn.read(waiting).decode(errors="ignore")
@@ -58,7 +107,6 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state):
 
             # Process complete messages (terminated by \r or \n)
             while "\r" in buffer or "\n" in buffer:
-                # Find the earliest terminator
                 cr_pos = buffer.find("\r")
                 lf_pos = buffer.find("\n")
                 if cr_pos == -1:
@@ -69,7 +117,6 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state):
                     pos = min(cr_pos, lf_pos)
 
                 received_message = buffer[:pos].strip()
-                # Skip past any consecutive \r\n
                 rest = buffer[pos + 1:]
                 if rest and rest[0] in ("\r", "\n"):
                     rest = rest[1:]
@@ -80,7 +127,6 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state):
 
                 _LOGGER.info("RS-232 message received: %s", received_message)
 
-                # Split multiple @-prefixed messages that may be concatenated
                 received_message = received_message.replace('#015', '\r')
                 messages = []
                 for part in received_message.split('@'):
@@ -95,10 +141,12 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state):
                     _LOGGER.info("Processing individual message: %s", msg)
                     message_parts = msg.split()
 
+                    app_state.increment_messages()
                     _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_parts)
 
         except Exception as e:
             _LOGGER.error("Error reading from RS-232 loop: %s", e)
+            app_state.increment_errors()
             time.sleep(1)
 
 
@@ -130,6 +178,7 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
     elif len(message_parts) >= 3 and message_parts[0] == "@N":
         error_msg = cardio2e_errors.format_error_message(message_parts)
         cardio2e_errors.report_error_state(mqtt_client, error_msg)
+        app_state.increment_errors()
         _LOGGER.info("\n#######\nNACK from cardio with transaction %s: %s", msg, error_msg)
 
     # Info/state update messages (@I)

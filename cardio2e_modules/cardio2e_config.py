@@ -4,6 +4,7 @@ import ast
 import configparser
 import logging
 import threading
+import time
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -70,6 +71,33 @@ class AppState(object):
         self._lock = threading.Lock()
         self._hvac_states = {}
         self._bypass_states = ""
+        # Diagnostics counters (atomic increments via lock)
+        self._messages_processed = 0
+        self._errors_count = 0
+        self._last_command = ""
+        self._start_time = time.monotonic()
+
+    def increment_messages(self):
+        with self._lock:
+            self._messages_processed += 1
+
+    def increment_errors(self):
+        with self._lock:
+            self._errors_count += 1
+
+    def set_last_command(self, cmd):
+        with self._lock:
+            self._last_command = cmd
+
+    def get_diagnostics(self):
+        with self._lock:
+            uptime_seconds = int(time.monotonic() - self._start_time)
+            return {
+                "uptime_seconds": uptime_seconds,
+                "messages_processed": self._messages_processed,
+                "errors_count": self._errors_count,
+                "last_command": self._last_command,
+            }
 
     @property
     def hvac_states(self):

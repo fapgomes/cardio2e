@@ -1,6 +1,7 @@
 """Cover entity logic for cardio2e."""
 
 import logging
+import threading
 import time
 
 from .cardio2e_serial import send_command, query_state
@@ -58,18 +59,34 @@ def handle_command(serial_conn, mqtt_client, topic, payload, get_entity_state_fn
 
     command = payload.upper()
     if command == "OPEN":
-        position = 100
+        send_command(serial_conn, "C", cover_id, 100)
     elif command == "CLOSE":
-        position = 0
+        send_command(serial_conn, "C", cover_id, 0)
     elif command == "STOP":
-        send_command(serial_conn, "C", cover_id, 50)
-        time.sleep(1)
-        position = get_entity_state_fn(serial_conn, mqtt_client, cover_id, "C")
+        # Run in a separate thread to avoid blocking the MQTT callback
+        t = threading.Thread(
+            target=_stop_cover,
+            args=(serial_conn, mqtt_client, cover_id, get_entity_state_fn),
+            daemon=True,
+        )
+        t.start()
     else:
         _LOGGER.error("Invalid command received: %s", command)
-        return
 
-    send_command(serial_conn, "C", cover_id, position)
+
+def _stop_cover(serial_conn, mqtt_client, cover_id, get_entity_state_fn):
+    """Stop a cover and query its actual position (runs in its own thread)."""
+    try:
+        # Send a dummy position to trigger stop
+        send_command(serial_conn, "C", cover_id, 50)
+        time.sleep(1)
+        # Query actual position after stop
+        position = get_entity_state_fn(serial_conn, mqtt_client, cover_id, "C")
+        if position is not None:
+            send_command(serial_conn, "C", cover_id, position)
+        _LOGGER.info("Cover %d stopped at position: %s", cover_id, position)
+    except Exception as e:
+        _LOGGER.error("Error stopping cover %d: %s", cover_id, e)
 
 
 def process_update(mqtt_client, message_parts):
