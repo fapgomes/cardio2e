@@ -3,6 +3,7 @@
 import ast
 import configparser
 import logging
+import threading
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -64,10 +65,36 @@ class AppConfig(object):
 
 
 class AppState(object):
-    """Mutable application state (replaces global variables)."""
+    """Mutable application state (replaces global variables). Thread-safe."""
     def __init__(self):
-        self.hvac_states = {}
-        self.bypass_states = ""
+        self._lock = threading.Lock()
+        self._hvac_states = {}
+        self._bypass_states = ""
+
+    @property
+    def hvac_states(self):
+        with self._lock:
+            return self._hvac_states
+
+    @hvac_states.setter
+    def hvac_states(self, value):
+        with self._lock:
+            self._hvac_states = value
+
+    @property
+    def bypass_states(self):
+        with self._lock:
+            return self._bypass_states
+
+    @bypass_states.setter
+    def bypass_states(self, value):
+        with self._lock:
+            self._bypass_states = value
+
+    @property
+    def lock(self):
+        """Expose lock for operations that need read-modify-write atomicity."""
+        return self._lock
 
 
 def load_config(path="cardio2e.conf"):

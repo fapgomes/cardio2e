@@ -40,14 +40,6 @@ def interpret_bypass_character(character):
 def handle_bypass_command(serial_conn, topic, payload, app_state):
     """Handle an MQTT bypass set command for a zone."""
     _LOGGER.debug("Entering bypass processing...")
-    _LOGGER.info("Current Zones: %s", app_state.bypass_states)
-
-    if not app_state.bypass_states or len(app_state.bypass_states) != 16:
-        _LOGGER.error("Failed to get current state of zones. Using default state.")
-        app_state.bypass_states = "N" * 16
-
-    zone_bypass_states = list(app_state.bypass_states)
-    _LOGGER.debug("BEFORE: Zones state: %s - Bypass var: %s", zone_bypass_states, app_state.bypass_states)
 
     try:
         zone_id = int(topic.split("/")[-1])
@@ -55,26 +47,34 @@ def handle_bypass_command(serial_conn, topic, payload, app_state):
         _LOGGER.error("Invalid zone ID on topic: %s", topic)
         return
 
-    if payload == "ON":
-        zone_bypass_states[zone_id - 1] = "Y"
-        _LOGGER.info("Zone %d deactivated", zone_id)
-    elif payload == "OFF":
-        zone_bypass_states[zone_id - 1] = "N"
-        _LOGGER.info("Zone %d activated", zone_id)
-    else:
-        _LOGGER.error("Invalid payload for zone bypass control: %s", payload)
-        return
+    with app_state.lock:
+        _LOGGER.info("Current Zones: %s", app_state.bypass_states)
 
-    _LOGGER.debug("AFTER: Zones state: %s - Bypass var: %s", zone_bypass_states, app_state.bypass_states)
-    try:
-        success = send_command(serial_conn, "B", 1, "".join(zone_bypass_states))
-        if success:
-            app_state.bypass_states = "".join(zone_bypass_states)
-            _LOGGER.info("Bypass states updated successfully: %s", app_state.bypass_states)
+        if not app_state.bypass_states or len(app_state.bypass_states) != 16:
+            _LOGGER.error("Failed to get current state of zones. Using default state.")
+            app_state.bypass_states = "N" * 16
+
+        zone_bypass_states = list(app_state.bypass_states)
+
+        if payload == "ON":
+            zone_bypass_states[zone_id - 1] = "Y"
+            _LOGGER.info("Zone %d deactivated", zone_id)
+        elif payload == "OFF":
+            zone_bypass_states[zone_id - 1] = "N"
+            _LOGGER.info("Zone %d activated", zone_id)
         else:
-            _LOGGER.warning("Bypass command failed, state not updated.")
-    except Exception as e:
-        _LOGGER.error("Error sending bypass command: %s", e)
+            _LOGGER.error("Invalid payload for zone bypass control: %s", payload)
+            return
+
+        try:
+            success = send_command(serial_conn, "B", 1, "".join(zone_bypass_states))
+            if success:
+                app_state.bypass_states = "".join(zone_bypass_states)
+                _LOGGER.info("Bypass states updated successfully: %s", app_state.bypass_states)
+            else:
+                _LOGGER.warning("Bypass command failed, state not updated.")
+        except Exception as e:
+            _LOGGER.error("Error sending bypass command: %s", e)
 
 
 def process_zone_update(mqtt_client, message_parts, config):
@@ -123,8 +123,10 @@ def process_login_bypass(mqtt_client, message, app_state):
     """Process @I B messages from the login response."""
     match = re.match(r"@I B \d+ ([NY]+)", message)
     if match:
-        app_state.bypass_states = match.group(1)
-        for i, bypass_state_char in enumerate(app_state.bypass_states, start=1):
+        states = match.group(1)
+        with app_state.lock:
+            app_state.bypass_states = states
+        for i, bypass_state_char in enumerate(states, start=1):
             bypass_state = interpret_bypass_character(bypass_state_char)
             mqtt_client.publish(f"cardio2e/zone/bypass/state/{i}", bypass_state, retain=True)
             _LOGGER.info("Bypass state for zone %d published to MQTT: %s", i, bypass_state)

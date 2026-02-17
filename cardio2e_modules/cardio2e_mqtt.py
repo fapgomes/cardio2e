@@ -1,6 +1,7 @@
 """MQTT setup, LWT, and message routing for cardio2e."""
 
 import logging
+import time
 
 import paho.mqtt.client as mqtt
 
@@ -38,6 +39,7 @@ def create_mqtt_client(config, serial_conn, app_state, get_entity_state_fn):
     })
 
     client.on_connect = _on_connect
+    client.on_disconnect = _on_disconnect
     client.on_message = _on_message
 
     client.connect(config.mqtt_address, config.mqtt_port, 60)
@@ -57,13 +59,17 @@ def publish_not_available(mqtt_client):
 
 
 def _on_connect(client, userdata, flags, rc):
-    """Callback when the MQTT client connects."""
-    _LOGGER.info("Connected to broker MQTT with code %s", rc)
+    """Callback when the MQTT client connects or reconnects."""
+    if rc != 0:
+        _LOGGER.error("MQTT connection failed with code %s. Will retry automatically.", rc)
+        return
 
-    # Publish availability on connect
+    _LOGGER.info("Connected to MQTT broker (code %s)", rc)
+
+    # Publish availability on (re)connect
     publish_available(client)
 
-    # Subscribe to all necessary topics
+    # (Re)subscribe to all necessary topics
     client.subscribe("cardio2e/light/set/#")
     client.subscribe("cardio2e/switch/set/#")
     client.subscribe("cardio2e/cover/set/#")
@@ -73,6 +79,14 @@ def _on_connect(client, userdata, flags, rc):
     client.subscribe("cardio2e/zone/bypass/set/#")
 
     _LOGGER.info("Subscribed to all necessary topics.")
+
+
+def _on_disconnect(client, userdata, rc):
+    """Callback when the MQTT client disconnects."""
+    if rc != 0:
+        _LOGGER.warning("Unexpected MQTT disconnection (code %s). Paho will auto-reconnect.", rc)
+    else:
+        _LOGGER.info("MQTT disconnected gracefully.")
 
 
 def _on_message(client, userdata, msg):

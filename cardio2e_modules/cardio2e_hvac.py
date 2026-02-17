@@ -50,31 +50,34 @@ def handle_set_command(serial_conn, mqtt_client, topic, payload, app_state):
         hvac_id = int(parts[2])
         setting_type = parts[-1]
 
-        hvac_states = app_state.hvac_states
+        with app_state.lock:
+            hvac_states = app_state.hvac_states
 
-        required_keys = ["heating_setpoint", "cooling_setpoint", "fan_state", "mode"]
-        for key in required_keys:
-            if key not in hvac_states.get(hvac_id, {}):
-                if hvac_id not in hvac_states:
-                    hvac_states[hvac_id] = {}
-                hvac_states[hvac_id][key] = 0 if "setpoint" in key else "off"
+            required_keys = ["heating_setpoint", "cooling_setpoint", "fan_state", "mode"]
+            for key in required_keys:
+                if key not in hvac_states.get(hvac_id, {}):
+                    if hvac_id not in hvac_states:
+                        hvac_states[hvac_id] = {}
+                    hvac_states[hvac_id][key] = 0 if "setpoint" in key else "off"
 
-        if setting_type == "heating_setpoint":
-            hvac_states[hvac_id]["heating_setpoint"] = float(payload)
-        elif setting_type == "cooling_setpoint":
-            hvac_states[hvac_id]["cooling_setpoint"] = float(payload)
-        elif setting_type == "fan":
-            hvac_states[hvac_id]["fan_state"] = payload.lower()
-        elif setting_type == "mode":
-            hvac_states[hvac_id]["mode"] = payload.lower()
-        else:
-            _LOGGER.error("Unknown setting type for HVAC: %s", setting_type)
-            return
+            if setting_type == "heating_setpoint":
+                hvac_states[hvac_id]["heating_setpoint"] = float(payload)
+            elif setting_type == "cooling_setpoint":
+                hvac_states[hvac_id]["cooling_setpoint"] = float(payload)
+            elif setting_type == "fan":
+                hvac_states[hvac_id]["fan_state"] = payload.lower()
+            elif setting_type == "mode":
+                hvac_states[hvac_id]["mode"] = payload.lower()
+            else:
+                _LOGGER.error("Unknown setting type for HVAC: %s", setting_type)
+                return
 
-        heating_setpoint = float(hvac_states[hvac_id]["cooling_setpoint"]) - 2
-        cooling_setpoint = float(hvac_states[hvac_id]["cooling_setpoint"])
-        fan_state = hvac_states[hvac_id]["fan_state"]
-        mode = hvac_states[hvac_id]["mode"]
+            heating_setpoint = float(hvac_states[hvac_id]["cooling_setpoint"]) - 2
+            cooling_setpoint = float(hvac_states[hvac_id]["cooling_setpoint"])
+            fan_state = hvac_states[hvac_id]["fan_state"]
+            mode = hvac_states[hvac_id]["mode"]
+
+            app_state.hvac_states = hvac_states
 
         send_command(
             serial_conn=serial_conn,
@@ -86,12 +89,13 @@ def handle_set_command(serial_conn, mqtt_client, topic, payload, app_state):
             mode=mode,
         )
 
-        hvac_states = update_hvac_state(mqtt_client, hvac_states, int(hvac_id), "heating_setpoint", heating_setpoint)
-        hvac_states = update_hvac_state(mqtt_client, hvac_states, int(hvac_id), "cooling_setpoint", cooling_setpoint)
-        hvac_states = update_hvac_state(mqtt_client, hvac_states, int(hvac_id), "fan_state", fan_state)
-        hvac_states = update_hvac_state(mqtt_client, hvac_states, int(hvac_id), "mode", mode)
-
-        app_state.hvac_states = hvac_states
+        with app_state.lock:
+            hvac_states = app_state.hvac_states
+            hvac_states = update_hvac_state(mqtt_client, hvac_states, int(hvac_id), "heating_setpoint", heating_setpoint)
+            hvac_states = update_hvac_state(mqtt_client, hvac_states, int(hvac_id), "cooling_setpoint", cooling_setpoint)
+            hvac_states = update_hvac_state(mqtt_client, hvac_states, int(hvac_id), "fan_state", fan_state)
+            hvac_states = update_hvac_state(mqtt_client, hvac_states, int(hvac_id), "mode", mode)
+            app_state.hvac_states = hvac_states
 
         _LOGGER.info("Updated HVAC %d topics with new settings: Heating %.1f, Cooling %.1f, Fan %s, Mode %s",
                       hvac_id, heating_setpoint, cooling_setpoint, fan_state, mode)
@@ -132,8 +136,11 @@ def process_temp_update(mqtt_client, message_parts, app_state):
     if match:
         temp_sensor_id, temp_value, temp_status = match.groups()
         temp_status_value = TEMP_CODE_TO_STATUS.get(temp_status, "Unknown")
-        app_state.hvac_states = update_hvac_state(mqtt_client, app_state.hvac_states, int(temp_sensor_id), "current_temperature", temp_value)
-        app_state.hvac_states = update_hvac_state(mqtt_client, app_state.hvac_states, int(temp_sensor_id), "alternative_status_from_temp", temp_status_value)
+        with app_state.lock:
+            hvac_states = app_state.hvac_states
+            hvac_states = update_hvac_state(mqtt_client, hvac_states, int(temp_sensor_id), "current_temperature", temp_value)
+            hvac_states = update_hvac_state(mqtt_client, hvac_states, int(temp_sensor_id), "alternative_status_from_temp", temp_status_value)
+            app_state.hvac_states = hvac_states
         _LOGGER.info("Temperature sensor %s state published to MQTT: %s C, Status: %s", temp_sensor_id, temp_value, temp_status_value)
 
 
@@ -145,12 +152,14 @@ def process_login(mqtt_client, message, serial_conn, config, app_state, get_name
         fan_state_value = FAN_CODE_TO_STATE.get(fan_state, "off")
         hvac_state = HVAC_CODE_TO_MODE.get(system_mode, "Unknown")
 
-        app_state.hvac_states = initialize_hvac_state(app_state.hvac_states, int(hvac_id), heating_setpoint, cooling_setpoint, fan_state, hvac_state)
-
-        app_state.hvac_states = update_hvac_state(mqtt_client, app_state.hvac_states, int(hvac_id), "heating_setpoint", heating_setpoint)
-        app_state.hvac_states = update_hvac_state(mqtt_client, app_state.hvac_states, int(hvac_id), "cooling_setpoint", cooling_setpoint)
-        app_state.hvac_states = update_hvac_state(mqtt_client, app_state.hvac_states, int(hvac_id), "fan", fan_state_value)
-        app_state.hvac_states = update_hvac_state(mqtt_client, app_state.hvac_states, int(hvac_id), "mode", hvac_state)
+        with app_state.lock:
+            hvac_states = app_state.hvac_states
+            hvac_states = initialize_hvac_state(hvac_states, int(hvac_id), heating_setpoint, cooling_setpoint, fan_state, hvac_state)
+            hvac_states = update_hvac_state(mqtt_client, hvac_states, int(hvac_id), "heating_setpoint", heating_setpoint)
+            hvac_states = update_hvac_state(mqtt_client, hvac_states, int(hvac_id), "cooling_setpoint", cooling_setpoint)
+            hvac_states = update_hvac_state(mqtt_client, hvac_states, int(hvac_id), "fan", fan_state_value)
+            hvac_states = update_hvac_state(mqtt_client, hvac_states, int(hvac_id), "mode", hvac_state)
+            app_state.hvac_states = hvac_states
 
         if config.fetch_names_hvac:
             get_name_fn(serial_conn, int(hvac_id), "H", mqtt_client)

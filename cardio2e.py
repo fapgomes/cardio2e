@@ -111,82 +111,135 @@ def parse_login_response(response, mqtt_client, serial_conn, config, app_state):
     _LOGGER.info("Login response parsing complete.")
 
 
+MAX_BACKOFF = 60  # Maximum seconds between reconnection attempts
+
+
+def _connect_serial(cfg):
+    """Open serial connection to Cardio2e. Returns serial object or raises."""
+    serial_conn = serial.Serial(
+        port=cfg.serial_port,
+        baudrate=cfg.baudrate,
+        write_timeout=1,
+        timeout=0.1,
+    )
+    _LOGGER.info("Connection to Cardio2e established on port %s", cfg.serial_port)
+    return serial_conn
+
+
+def _do_login_and_init(serial_conn, mqtt_client, cfg, app_state):
+    """Perform login, parse response, init covers and security."""
+    def _get_name_fn(s, eid, etype, m):
+        return get_name(s, eid, etype, m, cfg, app_state)
+
+    def _get_entity_state_fn(s_conn, m_client, eid, etype):
+        return get_entity_state(s_conn, m_client, eid, etype, cfg, app_state)
+
+    cardio2e_errors.initialize_error_payload(mqtt_client)
+
+    response = login(serial_conn, cfg.password)
+    if response:
+        parse_login_response(response, mqtt_client, serial_conn, cfg, app_state)
+        cardio2e_covers.initialize_entity_cover(
+            serial_conn, mqtt_client,
+            _get_name_fn, _get_entity_state_fn,
+            cfg.ncovers, cfg.fetch_cover_names, cfg.skip_init_cover_state,
+        )
+        get_name(serial_conn, 1, "S", mqtt_client, cfg, app_state)
+        return True
+    return False
+
+
 def main():
     # Setup logging early so we can see errors
     logging.basicConfig(level=logging.INFO)
 
-    try:
-        # Resolve config path relative to the script's directory
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        config_path = os.path.join(script_dir, "cardio2e.conf")
-        _LOGGER.info("Loading config from: %s (exists: %s)", config_path, os.path.exists(config_path))
-        cfg = load_config(config_path)
-        app_state = AppState()
+    # Load config once (does not change at runtime)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(script_dir, "cardio2e.conf")
+    _LOGGER.info("Loading config from: %s (exists: %s)", config_path, os.path.exists(config_path))
+    cfg = load_config(config_path)
+    app_state = AppState()
 
-        # Reconfigure logging based on config
-        if cfg.debug:
-            logging.getLogger().setLevel(logging.DEBUG)
+    if cfg.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
 
-        # Serial connection
-        serial_conn = serial.Serial(
-            port=cfg.serial_port,
-            baudrate=cfg.baudrate,
-            write_timeout=1,
-            timeout=0.1,
-        )
-        _LOGGER.info("Connection to Cardio2e established on port %s", cfg.serial_port)
+    serial_conn = None
+    mqtt_client = None
+    shutdown_requested = [False]
 
-        # Wrapper for get_entity_state that passes config and app_state
-        def _get_entity_state_fn(s_conn, m_client, eid, etype):
-            return get_entity_state(s_conn, m_client, eid, etype, cfg, app_state)
-
-        # MQTT client with LWT
-        mqtt_client = create_mqtt_client(cfg, serial_conn, app_state, _get_entity_state_fn)
-
-        # Shutdown handler
-        def handle_shutdown(signum, frame):
-            _LOGGER.info("Closing signal received. Logging out...")
+    def handle_shutdown(signum, frame):
+        _LOGGER.info("Closing signal received. Shutting down...")
+        shutdown_requested[0] = True
+        if mqtt_client:
             publish_not_available(mqtt_client)
+        if serial_conn and serial_conn.is_open:
             logout(serial_conn)
             serial_conn.close()
-            _LOGGER.info("Logout completed. Closing the program.")
-            exit(0)
+        _LOGGER.info("Shutdown complete.")
+        exit(0)
 
-        signal.signal(signal.SIGTERM, handle_shutdown)
-        signal.signal(signal.SIGINT, handle_shutdown)
+    signal.signal(signal.SIGTERM, handle_shutdown)
+    signal.signal(signal.SIGINT, handle_shutdown)
 
-        # Initialize error topic
-        cardio2e_errors.initialize_error_payload(mqtt_client)
+    backoff = 1
 
-        # Login
-        response = login(serial_conn, cfg.password)
-        if response:
-            parse_login_response(response, mqtt_client, serial_conn, cfg, app_state)
-            # Initialize covers (not included in login response)
-            cardio2e_covers.initialize_entity_cover(
-                serial_conn, mqtt_client,
-                lambda s, eid, etype, m: get_name(s, eid, etype, m, cfg, app_state),
-                _get_entity_state_fn,
-                cfg.ncovers, cfg.fetch_cover_names, cfg.skip_init_cover_state,
-            )
-            # Publish security autodiscovery (always entity 1)
-            get_name(serial_conn, 1, "S", mqtt_client, cfg, app_state)
+    while not shutdown_requested[0]:
+        try:
+            # Connect serial
+            if serial_conn is None or not serial_conn.is_open:
+                _LOGGER.info("Opening serial connection...")
+                serial_conn = _connect_serial(cfg)
 
-        _LOGGER.info("\n################\nCardio2e ready. Listening for events.\n################")
+            # Connect MQTT
+            if mqtt_client is None:
+                _LOGGER.info("Connecting to MQTT broker...")
 
-        # Start listener thread
-        listener_thread = threading.Thread(
-            target=listen_for_updates,
-            args=(serial_conn, mqtt_client, cfg, app_state),
-            daemon=True,
-        )
-        listener_thread.start()
+                def _get_entity_state_fn(s_conn, m_client, eid, etype):
+                    return get_entity_state(s_conn, m_client, eid, etype, cfg, app_state)
 
-        while True:
-            time.sleep(0.1)
+                mqtt_client = create_mqtt_client(cfg, serial_conn, app_state, _get_entity_state_fn)
 
-    except Exception as e:
-        _LOGGER.error("Failed to configure Cardio2e: %s", e)
+            # Login and initialize
+            _do_login_and_init(serial_conn, mqtt_client, cfg, app_state)
+
+            _LOGGER.info("\n################\nCardio2e ready. Listening for events.\n################")
+
+            # Reset backoff on successful connection
+            backoff = 1
+
+            # Run listener in current thread (blocks until serial disconnects)
+            listen_for_updates(serial_conn, mqtt_client, cfg, app_state)
+
+            # If we get here, the serial connection closed
+            _LOGGER.warning("Serial connection lost. Will reconnect...")
+            publish_not_available(mqtt_client)
+
+        except serial.SerialException as e:
+            _LOGGER.error("Serial error: %s. Reconnecting in %ds...", e, backoff)
+        except Exception as e:
+            _LOGGER.error("Unexpected error: %s. Reconnecting in %ds...", e, backoff)
+
+        # Clean up before retry
+        if serial_conn and serial_conn.is_open:
+            try:
+                serial_conn.close()
+            except Exception:
+                pass
+        serial_conn = None
+
+        # Stop MQTT client so we can re-create it with new serial_conn
+        if mqtt_client:
+            try:
+                publish_not_available(mqtt_client)
+                mqtt_client.loop_stop()
+                mqtt_client.disconnect()
+            except Exception:
+                pass
+            mqtt_client = None
+
+        # Exponential backoff
+        time.sleep(backoff)
+        backoff = min(backoff * 2, MAX_BACKOFF)
 
 
 if __name__ == "__main__":
