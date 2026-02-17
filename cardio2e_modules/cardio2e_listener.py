@@ -6,7 +6,7 @@ import logging
 import re
 import time
 
-from .cardio2e_serial import send_date, query_state
+from .cardio2e_serial import send_date, query_state, _serial_lock
 from . import (
     cardio2e_errors,
     cardio2e_lights,
@@ -97,9 +97,13 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state):
                 last_heartbeat = now
 
             # Read all available bytes at once
-            waiting = serial_conn.in_waiting
-            if waiting > 0:
-                raw = serial_conn.read(waiting).decode(errors="ignore")
+            with _serial_lock:
+                waiting = serial_conn.in_waiting
+                if waiting > 0:
+                    raw = serial_conn.read(waiting).decode(errors="ignore")
+                else:
+                    raw = ""
+            if raw:
                 buffer += raw
             else:
                 time.sleep(0.01)
