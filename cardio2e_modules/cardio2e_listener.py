@@ -30,6 +30,7 @@ _LOGGER = logging.getLogger(__name__)
 def listen_for_updates(serial_conn, mqtt_client, config, app_state):
     """Listen for RS-232 updates and dispatch to entity handlers."""
     last_time_sent = time.monotonic()
+    buffer = ""
 
     while True:
         if not serial_conn.is_open:
@@ -45,34 +46,56 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state):
                 _LOGGER.info("Sent time command to cardio2e: %s", time_command)
                 last_time_sent = now
 
-            # readline() already blocks up to serial timeout (1s),
-            # so no need for sleep - just check if data is available
-            if serial_conn.in_waiting > 0:
-                received_message = serial_conn.readline().decode().strip()
+            # Read all available bytes at once (avoids readline's 1s timeout
+            # waiting for \n when cardio2e terminates with \r)
+            waiting = serial_conn.in_waiting
+            if waiting > 0:
+                raw = serial_conn.read(waiting).decode(errors="ignore")
+                buffer += raw
             else:
-                # Short sleep only when no data waiting, to avoid busy loop
                 time.sleep(0.01)
                 continue
 
-            if received_message:
-                if received_message:
-                    _LOGGER.info("RS-232 message received: %s", received_message)
+            # Process complete messages (terminated by \r or \n)
+            while "\r" in buffer or "\n" in buffer:
+                # Find the earliest terminator
+                cr_pos = buffer.find("\r")
+                lf_pos = buffer.find("\n")
+                if cr_pos == -1:
+                    pos = lf_pos
+                elif lf_pos == -1:
+                    pos = cr_pos
+                else:
+                    pos = min(cr_pos, lf_pos)
 
-                    received_message = received_message.replace('#015', '\r')
-                    messages = []
-                    for part in received_message.split('@'):
-                        sub_parts = part.split('\r')
-                        messages.extend(sub_parts)
+                received_message = buffer[:pos].strip()
+                # Skip past any consecutive \r\n
+                rest = buffer[pos + 1:]
+                if rest and rest[0] in ("\r", "\n"):
+                    rest = rest[1:]
+                buffer = rest
 
-                    for msg in messages:
-                        if not msg:
-                            continue
+                if not received_message:
+                    continue
 
-                        msg = '@' + msg.strip()
-                        _LOGGER.info("Processing individual message: %s", msg)
-                        message_parts = msg.split()
+                _LOGGER.info("RS-232 message received: %s", received_message)
 
-                        _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_parts)
+                # Split multiple @-prefixed messages that may be concatenated
+                received_message = received_message.replace('#015', '\r')
+                messages = []
+                for part in received_message.split('@'):
+                    sub_parts = part.split('\r')
+                    messages.extend(sub_parts)
+
+                for msg in messages:
+                    if not msg:
+                        continue
+
+                    msg = '@' + msg.strip()
+                    _LOGGER.info("Processing individual message: %s", msg)
+                    message_parts = msg.split()
+
+                    _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_parts)
 
         except Exception as e:
             _LOGGER.error("Error reading from RS-232 loop: %s", e)

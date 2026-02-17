@@ -53,22 +53,42 @@ def query_name(serial_conn, entity_id, entity_type, max_retries=3, timeout=10):
     command = f"@G N {entity_type} {entity_id}{CARDIO2E_TERMINATOR}"
     attempts = 0
 
+    expected_prefix = f"@I N {entity_type}"
+
     while attempts < max_retries:
         try:
             serial_conn.write(command.encode())
             _LOGGER.debug("Command sent to get entity name %s %d: %s", entity_type, entity_id, command.strip())
 
             start_time = time.time()
-            while time.time() - start_time < timeout:
-                received_message = serial_conn.readline().decode(errors="ignore").strip()
+            buffer = ""
 
-                if received_message.startswith(f"@I N {entity_type}"):
-                    _LOGGER.debug("Complete message received for entity name %s %d: %s", entity_type, entity_id, received_message)
-                    name_part = received_message.split(f"@I N {entity_type}", 1)[-1].strip()
-                    entity_name = name_part.split("@")[0].strip()
-                    return entity_name
+            while time.time() - start_time < timeout:
+                waiting = serial_conn.in_waiting
+                if waiting > 0:
+                    buffer += serial_conn.read(waiting).decode(errors="ignore")
+                    # Process complete lines
+                    while "\r" in buffer or "\n" in buffer:
+                        cr = buffer.find("\r")
+                        lf = buffer.find("\n")
+                        if cr == -1:
+                            pos = lf
+                        elif lf == -1:
+                            pos = cr
+                        else:
+                            pos = min(cr, lf)
+                        line = buffer[:pos].strip()
+                        buffer = buffer[pos + 1:].lstrip("\r\n")
+
+                        if line.startswith(expected_prefix):
+                            _LOGGER.debug("Complete message received for entity name %s %d: %s", entity_type, entity_id, line)
+                            name_part = line.split(expected_prefix, 1)[-1].strip()
+                            entity_name = name_part.split("@")[0].strip()
+                            return entity_name
+                        elif line:
+                            _LOGGER.debug("Message ignored during name search: %s", line)
                 else:
-                    _LOGGER.debug("Message ignored during name search: %s", received_message)
+                    time.sleep(0.005)
 
             attempts += 1
             _LOGGER.debug("Attempt %d failed to get the name of entity %s %d. Trying again.", attempts, entity_type, entity_id)
@@ -87,6 +107,7 @@ def query_state(serial_conn, entity_id, entity_type, timeout=0.5, max_retries=5)
     Returns the raw message parts list on success, or None on failure.
     """
     command = f"@G {entity_type} 1{CARDIO2E_TERMINATOR}" if entity_type == "Z" else f"@G {entity_type} {entity_id}{CARDIO2E_TERMINATOR}"
+    expected_prefix = f"@I {entity_type} "
     attempts = 0
 
     while attempts < max_retries:
@@ -95,23 +116,27 @@ def query_state(serial_conn, entity_id, entity_type, timeout=0.5, max_retries=5)
             _LOGGER.info("Sent command %s to get entity %s %d state (try %d / %d)", command.strip(), entity_type, entity_id, attempts + 1, max_retries)
 
             start_time = time.time()
-            received_message = ""
+            buffer = ""
 
             while time.time() - start_time < timeout:
-                char = serial_conn.read().decode(errors="ignore")
-                if char:
-                    received_message += char
-                    if received_message.startswith(f"@I {entity_type}") and received_message.endswith("\n"):
-                        break
-
-            _LOGGER.debug("Message received: %s", received_message.strip())
-            if received_message.startswith(f"@I {entity_type} "):
-                message_parts = received_message.strip().split()
-                return message_parts
+                waiting = serial_conn.in_waiting
+                if waiting > 0:
+                    buffer += serial_conn.read(waiting).decode(errors="ignore")
+                    # Check for complete message (terminated by \r or \n)
+                    for terminator in ("\r", "\n"):
+                        if terminator in buffer:
+                            line, buffer = buffer.split(terminator, 1)
+                            line = line.strip()
+                            if line.startswith(expected_prefix):
+                                _LOGGER.debug("Message received: %s", line)
+                                return line.split()
+                            elif line:
+                                _LOGGER.debug("Message ignored: %s", line)
+                else:
+                    time.sleep(0.005)
 
             _LOGGER.warning("Incorrect answer for entity %s %d, attempt %d by %d.", entity_type, entity_id, attempts + 1, max_retries)
             attempts += 1
-            time.sleep(0.1)
 
         except Exception as e:
             _LOGGER.error("Error getting state of entity %s %d: %s", entity_type, entity_id, e)
@@ -138,15 +163,23 @@ def login(serial_conn, password, max_retries=5, timeout=10):
             _LOGGER.debug("Login command sent: %s", command.strip())
 
             start_time = time.time()
-            while time.time() - start_time < timeout:
-                received_message = serial_conn.readline().decode(errors="ignore").strip()
-                if received_message.startswith(success_response_prefix):
-                    _LOGGER.info("Login successful with response: %r", received_message)
-                    return received_message
-                else:
-                    _LOGGER.warning("Login failed with response: %r", received_message)
-                    break
+            buffer = ""
 
+            while time.time() - start_time < timeout:
+                waiting = serial_conn.in_waiting
+                if waiting > 0:
+                    buffer += serial_conn.read(waiting).decode(errors="ignore")
+                    # Look for the success prefix in any complete line
+                    if success_response_prefix in buffer:
+                        # Return the whole buffer as the login response
+                        # (contains all @I state messages)
+                        _LOGGER.info("Login successful with response length: %d", len(buffer))
+                        return buffer
+                else:
+                    time.sleep(0.01)
+
+            if buffer:
+                _LOGGER.warning("Login response did not contain success prefix. Got: %r", buffer[:200])
             attempts += 1
             _LOGGER.debug("Attempt %d failed for cardio2e login. Trying again.", attempts)
 

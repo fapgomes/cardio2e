@@ -132,7 +132,7 @@ def main():
             port=cfg.serial_port,
             baudrate=cfg.baudrate,
             write_timeout=1,
-            timeout=1,
+            timeout=0.1,
         )
         _LOGGER.info("Connection to Cardio2e established on port %s", cfg.serial_port)
 
