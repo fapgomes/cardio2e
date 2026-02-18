@@ -36,7 +36,7 @@ def process_update(mqtt_client, message_parts):
     security_state_value = SECURITY_CODE_TO_STATE.get(security_state, "unknown")
 
     state_topic = f"cardio2e/alarm/state/{security_id}"
-    mqtt_client.publish(state_topic, security_state_value, retain=False)
+    mqtt_client.publish(state_topic, security_state_value, retain=True)
     _LOGGER.info("Security %d state, updated to: %s - %s", security_id, security_state, security_state_value)
 
 

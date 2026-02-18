@@ -86,7 +86,7 @@ def process_zone_update(mqtt_client, message_parts, config):
         zone_state = interpret_zone_character(zone_state_char, zone_id, config.zones_normal_as_off)
 
         state_topic = f"cardio2e/zone/state/{zone_id}"
-        mqtt_client.publish(state_topic, zone_state, retain=False)
+        mqtt_client.publish(state_topic, zone_state, retain=True)
         if zone_state == "ON":
             _LOGGER.info("Status of zone %d published to MQTT: %s", zone_id, zone_state)
         _LOGGER.debug("Status of zone %d published to MQTT: %s", zone_id, zone_state)
@@ -101,7 +101,7 @@ def process_bypass_update(mqtt_client, message_parts, app_state):
         bypass_state = interpret_bypass_character(bypass_state_char)
 
         state_topic = f"cardio2e/zone/bypass/state/{zone_id}"
-        mqtt_client.publish(state_topic, bypass_state, retain=False)
+        mqtt_client.publish(state_topic, bypass_state, retain=True)
 
 
 def process_login_zones(mqtt_client, message, serial_conn, config, get_name_fn):

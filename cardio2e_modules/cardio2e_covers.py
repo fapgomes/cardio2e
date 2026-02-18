@@ -95,5 +95,5 @@ def process_update(mqtt_client, message_parts):
     cover_state = message_parts[3]
 
     state_topic = f"cardio2e/cover/state/{cover_id}"
-    mqtt_client.publish(state_topic, cover_state, retain=False)
+    mqtt_client.publish(state_topic, cover_state, retain=True)
     _LOGGER.info("Cover %d state, updated to: %s", cover_id, cover_state)

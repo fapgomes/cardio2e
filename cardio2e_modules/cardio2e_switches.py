@@ -36,7 +36,7 @@ def process_update(mqtt_client, message_parts):
     switch_state = SWITCH_CODE_TO_STATE.get(state, "OFF")
 
     state_topic = f"cardio2e/switch/state/{switch_id}"
-    mqtt_client.publish(state_topic, switch_state, retain=False)
+    mqtt_client.publish(state_topic, switch_state, retain=True)
     _LOGGER.info("Switch %d state, updated to: %s", switch_id, switch_state)
 
 

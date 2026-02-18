@@ -39,12 +39,12 @@ def process_update(mqtt_client, message_parts, config):
     light_state = "ON" if state > 0 else "OFF"
 
     state_topic = f"cardio2e/light/state/{light_id}"
-    mqtt_client.publish(state_topic, light_state, retain=False)
+    mqtt_client.publish(state_topic, light_state, retain=True)
     _LOGGER.info("Light %d state updated to: %s", light_id, light_state)
 
     if light_id in config.dimmer_lights:
         brightness_topic = f"cardio2e/light/brightness/{light_id}"
-        mqtt_client.publish(brightness_topic, state, retain=False)
+        mqtt_client.publish(brightness_topic, state, retain=True)
         _LOGGER.info("Light %d brightness updated to: %d", light_id, state)
 
 
