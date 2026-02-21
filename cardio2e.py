@@ -157,7 +157,6 @@ def _do_login_and_init(serial_conn, mqtt_client, cfg, app_state):
 def main():
     # Setup logging early so we can see errors
     logging.basicConfig(level=logging.INFO)
-    _LOGGER.info("Cardio2e v%s starting...", VERSION)
 
     # Load config once (does not change at runtime)
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -190,6 +189,8 @@ def main():
         syslog_handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
         logging.getLogger().addHandler(syslog_handler)
         _LOGGER.info("Syslog enabled: %s:%d", cfg.syslog_address, cfg.syslog_port)
+
+    _LOGGER.info("Cardio2e v%s starting...", VERSION)
 
     serial_conn = None
     mqtt_client = None
