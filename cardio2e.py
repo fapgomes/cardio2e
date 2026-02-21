@@ -168,10 +168,6 @@ def main():
         import socket
 
         class UDPSyslogHandler(logging.Handler):
-            PRIORITY_MAP = {
-                'DEBUG': 7, 'INFO': 6, 'WARNING': 4, 'ERROR': 3, 'CRITICAL': 2,
-            }
-
             def __init__(self, address, port):
                 super().__init__()
                 self._address = (address, port)
@@ -179,8 +175,7 @@ def main():
 
             def emit(self, record):
                 try:
-                    priority = 24 + self.PRIORITY_MAP.get(record.levelname, 6)  # facility=3 (daemon) * 8
-                    msg = "<%d>cardio2e: %s" % (priority, self.format(record))
+                    msg = "<14>cardio2e: %s" % self.format(record)
                     self._sock.sendto(msg.encode(), self._address)
                 except Exception:
                     self.handleError(record)
