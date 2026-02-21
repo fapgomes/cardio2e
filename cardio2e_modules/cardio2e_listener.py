@@ -196,7 +196,7 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
         elif entity_type == "C":
             cardio2e_covers.process_update(mqtt_client, message_parts)
         elif entity_type == "H":
-            cardio2e_hvac.process_update(mqtt_client, message_parts)
+            cardio2e_hvac.process_update(mqtt_client, message_parts, app_state)
         elif entity_type == "T":
             cardio2e_hvac.process_temp_update(mqtt_client, message_parts, app_state)
         elif entity_type == "S":

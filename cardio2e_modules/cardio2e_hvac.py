@@ -104,13 +104,13 @@ def handle_set_command(serial_conn, mqtt_client, topic, payload, app_state):
         _LOGGER.error("Error processing HVAC message: %s", e)
 
 
-def process_update(mqtt_client, message_parts):
+def process_update(mqtt_client, message_parts, app_state):
     """Process an @I H update from the serial listener."""
     hvac_id = int(message_parts[2])
     heating_setpoint = message_parts[3]
     cooling_setpoint = message_parts[4]
     fan_state = FAN_CODE_TO_STATE.get(message_parts[5], "off")
-    mode_code = message_parts[6]
+    mode_state = HVAC_CODE_TO_MODE.get(message_parts[6], "unknown")
 
     base_topic = f"cardio2e/hvac/{hvac_id}/state"
 
@@ -123,9 +123,18 @@ def process_update(mqtt_client, message_parts):
     mqtt_client.publish(f"{base_topic}/fan", fan_state, retain=True)
     _LOGGER.info("HVAC %d fan state updated to: %s", hvac_id, fan_state)
 
-    mode_state = HVAC_CODE_TO_MODE.get(mode_code, "unknown")
     mqtt_client.publish(f"{base_topic}/mode", mode_state, retain=True)
     _LOGGER.info("HVAC %d mode updated to: %s", hvac_id, mode_state)
+
+    with app_state.lock:
+        hvac_states = app_state.hvac_states
+        if hvac_id not in hvac_states:
+            hvac_states[hvac_id] = {}
+        hvac_states[hvac_id]["heating_setpoint"] = float(heating_setpoint)
+        hvac_states[hvac_id]["cooling_setpoint"] = float(cooling_setpoint)
+        hvac_states[hvac_id]["fan"] = fan_state
+        hvac_states[hvac_id]["mode"] = mode_state
+        app_state.hvac_states = hvac_states
 
 
 def process_temp_update(mqtt_client, message_parts, app_state):
