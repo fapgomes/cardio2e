@@ -1,7 +1,7 @@
 """Configuration loading and application state for cardio2e."""
 
-import ast
 import configparser
+import json
 import logging
 import threading
 import time
@@ -12,11 +12,11 @@ _LOGGER = logging.getLogger(__name__)
 def _parse_list_config(raw_value, field_name):
     """Parse a list value from config, returning list of ints."""
     try:
-        result = ast.literal_eval(raw_value)
+        result = json.loads(raw_value)
         if not isinstance(result, list):
             raise ValueError("%s must be a list." % field_name)
         return [int(item) for item in result]
-    except (ValueError, SyntaxError) as e:
+    except (ValueError, json.JSONDecodeError) as e:
         _LOGGER.error("Error interpreting %s in config file: %s", field_name, e)
         return []
 
