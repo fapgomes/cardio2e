@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.0.2 - 2026-02-21
+
+### Fixes
+- Fix zone names not loaded when zone state contains N (Normal) or E (Error) characters
+- Prevent empty query_name results from overwriting valid cached names
+
 ## v2.0.1 - 2026-02-21
 
 ### Features

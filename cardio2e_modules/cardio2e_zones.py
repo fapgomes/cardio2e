@@ -107,7 +107,7 @@ def process_bypass_update(mqtt_client, message_parts, app_state):
 
 def process_login_zones(mqtt_client, message, serial_conn, config, get_name_fn):
     """Process @I Z messages from the login response."""
-    match = re.match(r"@I Z \d+ ([CO]+)", message)
+    match = re.match(r"@I Z \d+ ([CONE]+)", message)
     if match:
         zone_states = match.group(1)
         for i, state_char in enumerate(zone_states, start=1):

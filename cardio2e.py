@@ -16,7 +16,7 @@ from cardio2e_modules.cardio2e_listener import listen_for_updates, _get_entity_s
 from cardio2e_modules.cardio2e_autodiscovery import publish_config as publish_autodiscovery_config
 from cardio2e_modules import cardio2e_errors, cardio2e_covers, cardio2e_lights, cardio2e_switches, cardio2e_security, cardio2e_hvac, cardio2e_zones
 
-VERSION = "2.0.1"
+VERSION = "2.0.2"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,10 +33,9 @@ def get_name(serial_conn, entity_id, entity_type, mqtt_client, config, app_state
         return entity_name
 
     entity_name = query_name(serial_conn, entity_id, entity_type)
-    if entity_name is None:
-        entity_name = "Unknown"
-        _LOGGER.warning("Could not get entity name %s %d. Using default name: %s", entity_type, entity_id, entity_name)
-        return entity_name
+    if not entity_name:
+        _LOGGER.warning("Could not get entity name %s %d. Skipping.", entity_type, entity_id)
+        return None
 
     app_state.set_entity_name(entity_type, entity_id, entity_name)
 
