@@ -25,6 +25,7 @@ def get_name(serial_conn, entity_id, entity_type, mqtt_client, config, app_state
 
     if entity_type == "S":
         entity_name = f"Security {entity_id}"
+        app_state.set_entity_name(entity_type, entity_id, entity_name)
         publish_autodiscovery_config(mqtt_client, entity_id, entity_name, entity_type, config)
         _LOGGER.info("Published autodiscovery config for security entity %s %d without fetching name.", entity_type, entity_id)
         return entity_name
@@ -34,6 +35,8 @@ def get_name(serial_conn, entity_id, entity_type, mqtt_client, config, app_state
         entity_name = "Unknown"
         _LOGGER.warning("Could not get entity name %s %d. Using default name: %s", entity_type, entity_id, entity_name)
         return entity_name
+
+    app_state.set_entity_name(entity_type, entity_id, entity_name)
 
     topic_map = {
         "L": f"cardio2e/light/name/{entity_id}",

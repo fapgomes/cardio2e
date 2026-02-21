@@ -112,19 +112,20 @@ def process_update(mqtt_client, message_parts, app_state):
     fan_state = FAN_CODE_TO_STATE.get(message_parts[5], "off")
     mode_state = HVAC_CODE_TO_MODE.get(message_parts[6], "unknown")
 
+    label = app_state.get_entity_label("HVAC", "H", hvac_id)
     base_topic = f"cardio2e/hvac/{hvac_id}/state"
 
     mqtt_client.publish(f"{base_topic}/heating_setpoint", heating_setpoint, retain=True)
-    _LOGGER.info("HVAC %d heating setpoint updated to: %s", hvac_id, heating_setpoint)
+    _LOGGER.info("%s heating setpoint updated to: %s", label, heating_setpoint)
 
     mqtt_client.publish(f"{base_topic}/cooling_setpoint", cooling_setpoint, retain=True)
-    _LOGGER.info("HVAC %d cooling setpoint updated to: %s", hvac_id, cooling_setpoint)
+    _LOGGER.info("%s cooling setpoint updated to: %s", label, cooling_setpoint)
 
     mqtt_client.publish(f"{base_topic}/fan", fan_state, retain=True)
-    _LOGGER.info("HVAC %d fan state updated to: %s", hvac_id, fan_state)
+    _LOGGER.info("%s fan state updated to: %s", label, fan_state)
 
     mqtt_client.publish(f"{base_topic}/mode", mode_state, retain=True)
-    _LOGGER.info("HVAC %d mode updated to: %s", hvac_id, mode_state)
+    _LOGGER.info("%s mode updated to: %s", label, mode_state)
 
     with app_state.lock:
         hvac_states = app_state.hvac_states

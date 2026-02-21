@@ -77,19 +77,20 @@ def handle_bypass_command(serial_conn, topic, payload, app_state):
             _LOGGER.error("Error sending bypass command: %s", e)
 
 
-def process_zone_update(mqtt_client, message_parts, config):
+def process_zone_update(mqtt_client, message_parts, config, app_state):
     """Process an @I Z update from the serial listener."""
     zone_states = message_parts[3]
 
     for zone_id in range(1, len(zone_states) + 1):
         zone_state_char = zone_states[zone_id - 1]
         zone_state = interpret_zone_character(zone_state_char, zone_id, config.zones_normal_as_off)
+        label = app_state.get_entity_label("Zone", "Z", zone_id)
 
         state_topic = f"cardio2e/zone/state/{zone_id}"
         mqtt_client.publish(state_topic, zone_state, retain=True)
         if zone_state == "ON":
-            _LOGGER.info("Status of zone %d published to MQTT: %s", zone_id, zone_state)
-        _LOGGER.debug("Status of zone %d published to MQTT: %s", zone_id, zone_state)
+            _LOGGER.info("Status of %s published to MQTT: %s", label, zone_state)
+        _LOGGER.debug("Status of %s published to MQTT: %s", label, zone_state)
 
 
 def process_bypass_update(mqtt_client, message_parts, app_state):

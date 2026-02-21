@@ -167,13 +167,13 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
         entity_id = int(message_parts[2])
 
         if entity_type == "L":
-            _LOGGER.info("OK for action light: %s", entity_id)
+            _LOGGER.info("OK for action %s", app_state.get_entity_label("light", "L", entity_id))
         elif entity_type == "R":
-            _LOGGER.info("OK for action switch: %s", entity_id)
+            _LOGGER.info("OK for action %s", app_state.get_entity_label("switch", "R", entity_id))
         elif entity_type == "C":
-            _LOGGER.info("OK for action cover: %s", entity_id)
+            _LOGGER.info("OK for action %s", app_state.get_entity_label("cover", "C", entity_id))
         elif entity_type == "S":
-            _LOGGER.info("OK for action security: %s", entity_id)
+            _LOGGER.info("OK for action %s", app_state.get_entity_label("security", "S", entity_id))
         elif entity_type == "B" and entity_id == 1:
             _get_entity_state(serial_conn, mqtt_client, 1, "B", config, app_state)
             _LOGGER.info("Bypass zones re-publish.")
@@ -190,19 +190,19 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
         entity_type = message_parts[1]
 
         if entity_type == "L":
-            cardio2e_lights.process_update(mqtt_client, message_parts, config)
+            cardio2e_lights.process_update(mqtt_client, message_parts, config, app_state)
         elif entity_type == "R":
-            cardio2e_switches.process_update(mqtt_client, message_parts)
+            cardio2e_switches.process_update(mqtt_client, message_parts, app_state)
         elif entity_type == "C":
-            cardio2e_covers.process_update(mqtt_client, message_parts)
+            cardio2e_covers.process_update(mqtt_client, message_parts, app_state)
         elif entity_type == "H":
             cardio2e_hvac.process_update(mqtt_client, message_parts, app_state)
         elif entity_type == "T":
             cardio2e_hvac.process_temp_update(mqtt_client, message_parts, app_state)
         elif entity_type == "S":
-            cardio2e_security.process_update(mqtt_client, message_parts)
+            cardio2e_security.process_update(mqtt_client, message_parts, app_state)
         elif entity_type == "Z":
-            cardio2e_zones.process_zone_update(mqtt_client, message_parts, config)
+            cardio2e_zones.process_zone_update(mqtt_client, message_parts, config, app_state)
         elif entity_type == "B":
             cardio2e_zones.process_bypass_update(mqtt_client, message_parts, app_state)
         else:

@@ -89,11 +89,12 @@ def _stop_cover(serial_conn, mqtt_client, cover_id, get_entity_state_fn):
         _LOGGER.error("Error stopping cover %d: %s", cover_id, e)
 
 
-def process_update(mqtt_client, message_parts):
+def process_update(mqtt_client, message_parts, app_state):
     """Process an @I C update from the serial listener."""
     cover_id = int(message_parts[2])
     cover_state = message_parts[3]
+    label = app_state.get_entity_label("Cover", "C", cover_id)
 
     state_topic = f"cardio2e/cover/state/{cover_id}"
     mqtt_client.publish(state_topic, cover_state, retain=True)
-    _LOGGER.info("Cover %d state, updated to: %s", cover_id, cover_state)
+    _LOGGER.info("%s state updated to: %s", label, cover_state)

@@ -28,16 +28,17 @@ def handle_set_command(serial_conn, topic, payload):
     send_command(serial_conn, "R", switch_id, command)
 
 
-def process_update(mqtt_client, message_parts):
+def process_update(mqtt_client, message_parts, app_state):
     """Process an @I R update from the serial listener."""
     switch_id = int(message_parts[2])
     state = message_parts[3]
 
     switch_state = SWITCH_CODE_TO_STATE.get(state, "OFF")
+    label = app_state.get_entity_label("Switch", "R", switch_id)
 
     state_topic = f"cardio2e/switch/state/{switch_id}"
     mqtt_client.publish(state_topic, switch_state, retain=True)
-    _LOGGER.info("Switch %d state, updated to: %s", switch_id, switch_state)
+    _LOGGER.info("%s state updated to: %s", label, switch_state)
 
 
 def process_login(mqtt_client, message, serial_conn, config, get_name_fn):

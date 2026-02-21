@@ -75,6 +75,7 @@ class AppState(object):
         self._lock = threading.RLock()
         self._hvac_states = {}
         self._bypass_states = ""
+        self._entity_names = {}  # {(entity_type, entity_id): name}
         # Diagnostics counters (atomic increments via lock)
         self._messages_processed = 0
         self._errors_count = 0
@@ -122,6 +123,19 @@ class AppState(object):
     def bypass_states(self, value):
         with self._lock:
             self._bypass_states = value
+
+    def set_entity_name(self, entity_type, entity_id, name):
+        """Store the friendly name of an entity."""
+        with self._lock:
+            self._entity_names[(entity_type, int(entity_id))] = name
+
+    def get_entity_label(self, prefix, entity_type, entity_id):
+        """Return 'prefix name (id: N)' if name exists, otherwise 'prefix N'."""
+        with self._lock:
+            name = self._entity_names.get((entity_type, int(entity_id)))
+        if name and name != "Unknown":
+            return "%s %s (id: %d)" % (prefix, name, int(entity_id))
+        return "%s %d" % (prefix, int(entity_id))
 
     @property
     def lock(self):

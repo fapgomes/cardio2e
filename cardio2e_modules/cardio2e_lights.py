@@ -31,21 +31,22 @@ def handle_set_command(serial_conn, topic, payload):
     send_command(serial_conn, "L", light_id, command)
 
 
-def process_update(mqtt_client, message_parts, config):
+def process_update(mqtt_client, message_parts, config, app_state):
     """Process an @I L update from the serial listener."""
     light_id = int(message_parts[2])
     state = int(message_parts[3])
 
     light_state = "ON" if state > 0 else "OFF"
+    label = app_state.get_entity_label("Light", "L", light_id)
 
     state_topic = f"cardio2e/light/state/{light_id}"
     mqtt_client.publish(state_topic, light_state, retain=True)
-    _LOGGER.info("Light %d state updated to: %s", light_id, light_state)
+    _LOGGER.info("%s state updated to: %s", label, light_state)
 
     if light_id in config.dimmer_lights:
         brightness_topic = f"cardio2e/light/brightness/{light_id}"
         mqtt_client.publish(brightness_topic, state, retain=True)
-        _LOGGER.info("Light %d brightness updated to: %d", light_id, state)
+        _LOGGER.info("%s brightness updated to: %d", label, state)
 
 
 def process_login(mqtt_client, message, serial_conn, config, get_name_fn):
