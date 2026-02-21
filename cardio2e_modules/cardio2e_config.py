@@ -58,6 +58,10 @@ class AppConfig(object):
         self.fetch_zone_names = kwargs.get("fetch_zone_names", True)
         self.zones_normal_as_off = kwargs.get("zones_normal_as_off", [])
 
+        # Syslog
+        self.syslog_address = kwargs.get("syslog_address", "")
+        self.syslog_port = kwargs.get("syslog_port", 514)
+
         # MQTT
         self.mqtt_address = kwargs.get("mqtt_address", "localhost")
         self.mqtt_port = kwargs.get("mqtt_port", 1883)
@@ -155,6 +159,8 @@ def load_config(path="cardio2e.conf"):
         alarm_code=int(c2e.get("code", "12345")),
         fetch_zone_names=c2e.get("fetch_zone_names", "true").lower() == "true",
         zones_normal_as_off=_parse_list_config(c2e.get("zones_normal_as_off", "[]"), "zones_normal_as_off"),
+        syslog_address=glb.get("syslog_address", ""),
+        syslog_port=int(glb.get("syslog_port", "514")),
         mqtt_address=mqtt["address"],
         mqtt_port=int(mqtt["port"]),
         mqtt_username=mqtt["username"],

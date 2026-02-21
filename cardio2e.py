@@ -163,6 +163,17 @@ def main():
     if cfg.debug:
         logging.getLogger().setLevel(logging.DEBUG)
 
+    # Setup remote syslog if configured
+    if cfg.syslog_address:
+        from logging.handlers import SysLogHandler
+        syslog_handler = SysLogHandler(
+            address=(cfg.syslog_address, cfg.syslog_port),
+            facility=SysLogHandler.LOG_DAEMON,
+        )
+        syslog_handler.setFormatter(logging.Formatter("cardio2e: %(name)s %(levelname)s %(message)s"))
+        logging.getLogger().addHandler(syslog_handler)
+        _LOGGER.info("Syslog enabled: %s:%d", cfg.syslog_address, cfg.syslog_port)
+
     serial_conn = None
     mqtt_client = None
     shutdown_requested = [False]

@@ -1,6 +1,9 @@
 [global]
 debug = 0
 ha_discover_prefix = homeassistant
+# syslog config (leave syslog_address empty to disable)
+syslog_address =
+syslog_port = 514
 [cardio2e]
 # serial port config
 serial_port = /dev/ttyUSB0
