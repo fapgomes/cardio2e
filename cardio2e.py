@@ -164,27 +164,17 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
 
     # Setup remote syslog if configured
-    _LOGGER.info("Syslog config: address='%s', port=%s", cfg.syslog_address, cfg.syslog_port)
     if cfg.syslog_address:
         import socket
         from logging.handlers import SysLogHandler
-
-        # Send raw UDP test message to verify connectivity
-        try:
-            test_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            test_msg = "<14>cardio2e: UDP test message from cardio2e startup"
-            test_sock.sendto(test_msg.encode(), (cfg.syslog_address, cfg.syslog_port))
-            test_sock.close()
-            _LOGGER.info("Syslog UDP test message sent to %s:%d", cfg.syslog_address, cfg.syslog_port)
-        except Exception as e:
-            _LOGGER.error("Syslog UDP test failed: %s", e)
-
         syslog_handler = SysLogHandler(
             address=(cfg.syslog_address, cfg.syslog_port),
             facility=SysLogHandler.LOG_DAEMON,
             socktype=socket.SOCK_DGRAM,
         )
-        syslog_handler.setFormatter(logging.Formatter("cardio2e: %(message)s"))
+        syslog_handler.append_nul = False
+        syslog_handler.ident = "cardio2e: "
+        syslog_handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
         logging.getLogger().addHandler(syslog_handler)
         _LOGGER.info("Syslog enabled: %s:%d", cfg.syslog_address, cfg.syslog_port)
 
