@@ -129,7 +129,7 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state):
                 if not received_message:
                     continue
 
-                _LOGGER.info("RS-232 message received: %s", received_message)
+                _LOGGER.debug("RS-232 message received: %s", received_message)
 
                 received_message = received_message.replace('#015', '\r')
                 messages = []
@@ -244,14 +244,12 @@ def _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, 
             "heating_setpoint": message_parts[3],
             "cooling_setpoint": message_parts[4],
             "fan": FAN_CODE_TO_STATE.get(message_parts[5], "off"),
-            "mode": message_parts[6],
+            "mode": HVAC_CODE_TO_MODE.get(message_parts[6], "Unknown"),
         }
         with app_state.lock:
             hvac_states = app_state.hvac_states
             for topic_suffix, state in topics.items():
                 hvac_states = cardio2e_hvac.update_hvac_state(mqtt_client, hvac_states, int(entity_id), topic_suffix, state)
-            mode_state = HVAC_CODE_TO_MODE.get(topics["mode"], "Unknown")
-            hvac_states = cardio2e_hvac.update_hvac_state(mqtt_client, hvac_states, int(entity_id), "mode", mode_state)
             app_state.hvac_states = hvac_states
         return True
 
