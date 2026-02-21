@@ -166,14 +166,26 @@ def main():
     # Setup remote syslog if configured
     if cfg.syslog_address:
         import socket
-        from logging.handlers import SysLogHandler
-        syslog_handler = SysLogHandler(
-            address=(cfg.syslog_address, cfg.syslog_port),
-            facility=SysLogHandler.LOG_DAEMON,
-            socktype=socket.SOCK_DGRAM,
-        )
-        syslog_handler.append_nul = False
-        syslog_handler.ident = "cardio2e: "
+
+        class UDPSyslogHandler(logging.Handler):
+            PRIORITY_MAP = {
+                'DEBUG': 7, 'INFO': 6, 'WARNING': 4, 'ERROR': 3, 'CRITICAL': 2,
+            }
+
+            def __init__(self, address, port):
+                super().__init__()
+                self._address = (address, port)
+                self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+            def emit(self, record):
+                try:
+                    priority = 24 + self.PRIORITY_MAP.get(record.levelname, 6)  # facility=3 (daemon) * 8
+                    msg = "<%d>cardio2e: %s" % (priority, self.format(record))
+                    self._sock.sendto(msg.encode(), self._address)
+                except Exception:
+                    self.handleError(record)
+
+        syslog_handler = UDPSyslogHandler(cfg.syslog_address, cfg.syslog_port)
         syslog_handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
         logging.getLogger().addHandler(syslog_handler)
         _LOGGER.info("Syslog enabled: %s:%d", cfg.syslog_address, cfg.syslog_port)
