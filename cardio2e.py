@@ -16,6 +16,8 @@ from cardio2e_modules.cardio2e_listener import listen_for_updates, _get_entity_s
 from cardio2e_modules.cardio2e_autodiscovery import publish_config as publish_autodiscovery_config
 from cardio2e_modules import cardio2e_errors, cardio2e_covers, cardio2e_lights, cardio2e_switches, cardio2e_security, cardio2e_hvac, cardio2e_zones
 
+VERSION = "2.0.1"
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -155,6 +157,7 @@ def _do_login_and_init(serial_conn, mqtt_client, cfg, app_state):
 def main():
     # Setup logging early so we can see errors
     logging.basicConfig(level=logging.INFO)
+    _LOGGER.info("Cardio2e v%s starting...", VERSION)
 
     # Load config once (does not change at runtime)
     script_dir = os.path.dirname(os.path.abspath(__file__))
