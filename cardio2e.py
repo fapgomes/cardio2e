@@ -164,13 +164,16 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
 
     # Setup remote syslog if configured
+    _LOGGER.info("Syslog config: address='%s', port=%s", cfg.syslog_address, cfg.syslog_port)
     if cfg.syslog_address:
+        import socket
         from logging.handlers import SysLogHandler
         syslog_handler = SysLogHandler(
             address=(cfg.syslog_address, cfg.syslog_port),
             facility=SysLogHandler.LOG_DAEMON,
+            socktype=socket.SOCK_DGRAM,
         )
-        syslog_handler.setFormatter(logging.Formatter("cardio2e: %(name)s %(levelname)s %(message)s"))
+        syslog_handler.setFormatter(logging.Formatter("%(name)s[%(process)d]: %(levelname)s %(message)s"))
         logging.getLogger().addHandler(syslog_handler)
         _LOGGER.info("Syslog enabled: %s:%d", cfg.syslog_address, cfg.syslog_port)
 
