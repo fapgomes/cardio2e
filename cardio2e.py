@@ -16,7 +16,7 @@ from cardio2e_modules.cardio2e_listener import listen_for_updates, _get_entity_s
 from cardio2e_modules.cardio2e_autodiscovery import publish_config as publish_autodiscovery_config
 from cardio2e_modules import cardio2e_errors, cardio2e_covers, cardio2e_lights, cardio2e_switches, cardio2e_security, cardio2e_hvac, cardio2e_zones
 
-VERSION = "2.0.2"
+VERSION = "2.0.3"
 
 _LOGGER = logging.getLogger(__name__)
 

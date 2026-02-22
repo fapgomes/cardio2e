@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.0.3 - 2026-02-22
+
+### Fixes
+- Treat alarm code as string instead of int to preserve leading zeros
+
 ## v2.0.2 - 2026-02-21
 
 ### Fixes

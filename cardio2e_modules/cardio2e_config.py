@@ -52,7 +52,7 @@ class AppConfig(object):
         self.fetch_names_hvac = kwargs.get("fetch_names_hvac", True)
 
         # Security
-        self.alarm_code = kwargs.get("alarm_code", 12345)
+        self.alarm_code = kwargs.get("alarm_code", "12345")
 
         # Zones
         self.fetch_zone_names = kwargs.get("fetch_zone_names", True)
@@ -170,7 +170,7 @@ def load_config(path="cardio2e.conf"):
         skip_init_cover_state=c2e.get("skip_init_cover_state", "false").lower() == "true",
         ncovers=int(c2e.get("ncovers", "20")),
         fetch_names_hvac=c2e.get("fetch_names_hvac", "true").lower() == "true",
-        alarm_code=int(c2e.get("code", "12345")),
+        alarm_code=c2e.get("code", "12345"),
         fetch_zone_names=c2e.get("fetch_zone_names", "true").lower() == "true",
         zones_normal_as_off=_parse_list_config(c2e.get("zones_normal_as_off", "[]"), "zones_normal_as_off"),
         syslog_address=glb.get("syslog_address", ""),
