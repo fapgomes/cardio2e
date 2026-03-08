@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.0.6 - 2026-03-08
+
+### Features
+- Add scenario (macro) support — fire-and-forget scenes via `@S M {id}`
+- New config options: `nscenarios` (default: 0, disabled) and `fetch_scenario_names` (default: true)
+- Scenarios appear as `scene` entities in Home Assistant via MQTT autodiscovery
+- Scenario names fetched from Cardio2e controller via `@G N M {id}`
+
 ## v2.0.5 - 2026-03-08
 
 ### Features

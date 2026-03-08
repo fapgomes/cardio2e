@@ -14,9 +14,9 @@ from cardio2e_modules.cardio2e_mqtt import create_mqtt_client, publish_available
 from cardio2e_modules.cardio2e_serial import login, logout
 from cardio2e_modules.cardio2e_listener import listen_for_updates, _get_entity_state
 from cardio2e_modules.cardio2e_autodiscovery import publish_config as publish_autodiscovery_config
-from cardio2e_modules import cardio2e_errors, cardio2e_covers, cardio2e_lights, cardio2e_switches, cardio2e_security, cardio2e_hvac, cardio2e_zones
+from cardio2e_modules import cardio2e_errors, cardio2e_covers, cardio2e_lights, cardio2e_switches, cardio2e_security, cardio2e_hvac, cardio2e_zones, cardio2e_scenarios
 
-VERSION = "2.0.5"
+VERSION = "2.0.6"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,6 +45,7 @@ def get_name(serial_conn, entity_id, entity_type, mqtt_client, config, app_state
         "C": f"cardio2e/cover/name/{entity_id}",
         "H": f"cardio2e/hvac/{entity_id}/name",
         "Z": f"cardio2e/zone/name/{entity_id}",
+        "M": f"cardio2e/scene/name/{entity_id}",
     }
     mqtt_topic = topic_map.get(entity_type)
     if mqtt_topic:
@@ -149,6 +150,7 @@ def _do_login_and_init(serial_conn, mqtt_client, cfg, app_state):
             cfg.ncovers, cfg.fetch_cover_names, cfg.skip_init_cover_state,
         )
         get_name(serial_conn, 1, "S", mqtt_client, cfg, app_state)
+        cardio2e_scenarios.initialize_scenarios(serial_conn, mqtt_client, cfg, app_state)
         return True
     return False
 

@@ -40,6 +40,10 @@ code = 12345 # (security code for arm / disarm alarm)
 fetch_zone_names = true # on startup will fetch the current name of zones. After the first time can be disabled.
 zones_normal_as_off = [14]       # this zones, will return off when N is returned
 
+# scenario (macro) config
+nscenarios = 0  # total number of scenarios to initialize (0 = disabled)
+fetch_scenario_names = true  # on startup will fetch the current name of scenarios
+
 [mqtt]
 address = 192.168.1.100
 port = 1883

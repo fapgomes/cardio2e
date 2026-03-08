@@ -199,6 +199,26 @@ def _zone_config(entity_id, entity_name):
     return sensor_config_topic, sensor_config_payload, switch_config_topic, switch_config_payload
 
 
+def _scene_config(entity_id, entity_name):
+    """Build autodiscovery payload for a scene (scenario)."""
+    config_topic = f"homeassistant/scene/cardio2e_scene_{entity_id}/config"
+    command_topic = f"cardio2e/scene/set/{entity_id}"
+
+    config_payload = {
+        "name": entity_name,
+        "unique_id": f"cardio2e_scene_{entity_id}",
+        "command_topic": command_topic,
+        "payload_on": "ON",
+        "icon": "mdi:play-circle",
+        "qos": 1,
+        "retain": False,
+        "device": DEVICE_INFO["M"],
+        **_availability_block(),
+    }
+
+    return config_topic, config_payload
+
+
 def publish_config(mqtt_client, entity_id, entity_name, entity_type, config=None):
     """
     Publish the autodiscovery configuration for a given entity.
@@ -241,3 +261,8 @@ def publish_config(mqtt_client, entity_id, entity_name, entity_type, config=None
         _LOGGER.info("Published autodiscovery config for binary sensor (zone): %s", entity_name)
         mqtt_client.publish(switch_topic, json.dumps(switch_payload), retain=True)
         _LOGGER.info("Published autodiscovery config for zone bypass switch: %s", entity_name)
+
+    elif entity_type == "M":
+        topic, payload = _scene_config(entity_id, entity_name)
+        mqtt_client.publish(topic, json.dumps(payload), retain=True)
+        _LOGGER.info("Published autodiscovery config for scene (scenario): %s", entity_name)

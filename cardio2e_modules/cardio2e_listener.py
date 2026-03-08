@@ -204,6 +204,8 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
             _LOGGER.info("OK for action %s", app_state.get_entity_label("cover", "C", entity_id))
         elif entity_type == "S":
             _LOGGER.info("OK for action %s", app_state.get_entity_label("security", "S", entity_id))
+        elif entity_type == "M":
+            _LOGGER.info("OK for action %s", app_state.get_entity_label("scenario", "M", entity_id))
         elif entity_type == "B" and entity_id == 1:
             _get_entity_state(serial_conn, mqtt_client, 1, "B", config, app_state)
             _LOGGER.info("Bypass zones re-publish.")

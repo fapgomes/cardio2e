@@ -13,6 +13,7 @@ from . import (
     cardio2e_hvac,
     cardio2e_security,
     cardio2e_zones,
+    cardio2e_scenarios,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -86,6 +87,7 @@ def _subscribe_all(client):
     client.subscribe("cardio2e/hvac/+/set/#")
     client.subscribe("cardio2e/alarm/set/#")
     client.subscribe("cardio2e/zone/bypass/set/#")
+    client.subscribe("cardio2e/scene/set/#")
     _LOGGER.info("Subscribed to all necessary topics.")
 
 
@@ -141,3 +143,6 @@ def _on_message(client, userdata, msg):
 
     elif topic.startswith("cardio2e/zone/bypass/set/"):
         cardio2e_zones.handle_bypass_command(serial_conn, topic, payload, app_state)
+
+    elif topic.startswith("cardio2e/scene/set/"):
+        cardio2e_scenarios.handle_set_command(serial_conn, topic, payload, config)

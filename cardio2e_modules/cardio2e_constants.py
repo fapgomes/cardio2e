@@ -95,6 +95,12 @@ DEVICE_INFO = {
         "model": "Cardio2e",
         "manufacturer": "Cardio2e Manufacturer",
     },
+    "M": {
+        "identifiers": ["Cardio2e Scenarios"],
+        "name": "Cardio2e Scenarios",
+        "model": "Cardio2e",
+        "manufacturer": "Cardio2e Manufacturer",
+    },
     "errors": {
         "identifiers": ["Cardio2e System Errors"],
         "name": "Cardio2e System Errors",
