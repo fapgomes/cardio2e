@@ -34,6 +34,30 @@ HEARTBEAT_INTERVAL = 30  # seconds
 _LOGGER = logging.getLogger(__name__)
 
 
+def _sync_all_entities(serial_conn, mqtt_client, config, app_state):
+    """Re-query state of all known entities and republish to MQTT."""
+    _LOGGER.info("Starting periodic entity sync...")
+    count = 0
+
+    # Z and B: query with ID 1 (returns all zones/bypasses)
+    for entity_type in ("Z", "B"):
+        _get_entity_state(serial_conn, mqtt_client, 1, entity_type, config, app_state)
+        count += 1
+
+    # S: security, always ID 1
+    _get_entity_state(serial_conn, mqtt_client, 1, "S", config, app_state)
+    count += 1
+
+    # L, R, C, H, T: iterate known IDs
+    for entity_type in ("L", "R", "C", "H", "T"):
+        entity_ids = app_state.get_known_entity_ids(entity_type)
+        for entity_id in entity_ids:
+            _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, app_state)
+            count += 1
+
+    _LOGGER.info("Periodic entity sync complete: %d queries sent.", count)
+
+
 def _publish_heartbeat(mqtt_client, app_state):
     """Publish heartbeat and diagnostics to MQTT."""
     timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
@@ -71,6 +95,7 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state):
     """Listen for RS-232 updates and dispatch to entity handlers."""
     last_time_sent = time.monotonic()
     last_heartbeat = time.monotonic()
+    last_sync = time.monotonic()
     buffer = ""
 
     # Publish diagnostics autodiscovery on start
@@ -95,6 +120,11 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state):
             if (now - last_heartbeat) >= HEARTBEAT_INTERVAL:
                 _publish_heartbeat(mqtt_client, app_state)
                 last_heartbeat = now
+
+            # Periodic entity sync
+            if config.sync_interval > 0 and (now - last_sync) >= config.sync_interval:
+                _sync_all_entities(serial_conn, mqtt_client, config, app_state)
+                last_sync = now
 
             # Read all available bytes at once
             with _serial_lock:

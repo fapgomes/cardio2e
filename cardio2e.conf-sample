@@ -13,6 +13,9 @@ baudrate = 9600
 password = 00000
 # update cardio2e date interval
 update_date_interval = 3600
+# periodic sync interval in seconds (re-query all entities to keep HA in sync)
+# 43200 = 12 hours, 0 = disabled
+sync_interval = 43200
 
 # lights config
 fetch_light_names = true  # on startup will fetch the current name of lights. After the first time can be disabled.

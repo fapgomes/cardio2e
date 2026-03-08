@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.0.5 - 2026-03-08
+
+### Features
+- Add periodic entity sync to re-query all known entities and republish state to MQTT
+- New `sync_interval` config option (default: 43200s / 12h, 0 to disable)
+- Ensures HA stays in sync with Cardio2e hardware even if MQTT messages are lost
+
 ## v2.0.4 - 2026-03-08
 
 ### Fixes

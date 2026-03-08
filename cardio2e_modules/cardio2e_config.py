@@ -34,6 +34,7 @@ class AppConfig(object):
         self.baudrate = kwargs.get("baudrate", 9600)
         self.password = kwargs.get("password", "00000")
         self.update_date_interval = kwargs.get("update_date_interval", 3600)
+        self.sync_interval = kwargs.get("sync_interval", 43200)
 
         # Lights
         self.fetch_light_names = kwargs.get("fetch_light_names", True)
@@ -137,6 +138,13 @@ class AppState(object):
             return "%s %s (id: %d)" % (prefix, name, int(entity_id))
         return "%s %d" % (prefix, int(entity_id))
 
+    def get_known_entity_ids(self, entity_type):
+        """Return sorted list of known entity IDs for a given type."""
+        with self._lock:
+            return sorted(
+                eid for etype, eid in self._entity_names if etype == entity_type
+            )
+
     @property
     def lock(self):
         """Expose lock for operations that need read-modify-write atomicity."""
@@ -162,6 +170,7 @@ def load_config(path="cardio2e.conf"):
         baudrate=int(c2e.get("baudrate", "9600")),
         password=c2e["password"],
         update_date_interval=int(c2e.get("update_date_interval", "3600")),
+        sync_interval=int(c2e.get("sync_interval", "43200")),
         fetch_light_names=c2e.get("fetch_light_names", "true").lower() == "true",
         dimmer_lights=_parse_list_config(c2e.get("dimmer_lights", "[]"), "dimmer_lights"),
         force_include_lights=_parse_list_config(c2e.get("force_include_lights", "[]"), "force_include_lights"),
