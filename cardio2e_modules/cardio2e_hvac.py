@@ -140,7 +140,7 @@ def process_update(mqtt_client, message_parts, app_state):
 
 def process_temp_update(mqtt_client, message_parts, app_state):
     """Process an @I T update from the serial listener or login."""
-    match = re.match(r"@I T (\d+) (\d+\.\d+) ([HCO])", " ".join(message_parts) if isinstance(message_parts, list) else message_parts)
+    match = re.match(r"@I T (\d+) (\d+\.?\d*) ([HCO])", " ".join(message_parts) if isinstance(message_parts, list) else message_parts)
     if match:
         temp_sensor_id, temp_value, temp_status = match.groups()
         temp_status_value = TEMP_CODE_TO_STATUS.get(temp_status, "Unknown")
@@ -154,7 +154,7 @@ def process_temp_update(mqtt_client, message_parts, app_state):
 
 def process_login(mqtt_client, message, serial_conn, config, app_state, get_name_fn):
     """Process @I H messages from the login response."""
-    match = re.match(r"@I H (\d+) (\d+\.\d+) (\d+\.\d+) ([SR]) ([AHCOEN])", message)
+    match = re.match(r"@I H (\d+) (\d+\.?\d*) (\d+\.?\d*) ([SR]) ([AHCOEN])", message)
     if match:
         hvac_id, heating_setpoint, cooling_setpoint, fan_state, system_mode = match.groups()
         fan_state_value = FAN_CODE_TO_STATE.get(fan_state, "off")

@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.0.4 - 2026-03-08
+
+### Fixes
+- Fix NACK error parsing: use last element as error code to handle optional object number per protocol spec
+- Replace deprecated `datetime.utcnow()` with `datetime.now(timezone.utc)`
+- Accept integer temperatures and setpoints in HVAC regexes (e.g. "21" in addition to "21.0")
+
 ## v2.0.3 - 2026-02-22
 
 ### Fixes

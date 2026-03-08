@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .cardio2e_constants import DEVICE_INFO, ERROR_CODES, AVAILABILITY_TOPIC, PAYLOAD_AVAILABLE, PAYLOAD_NOT_AVAILABLE
 
@@ -12,11 +12,13 @@ _LOGGER = logging.getLogger(__name__)
 def format_error_message(message_parts):
     """
     Format a NACK error message using the ERROR_CODES dict.
+    Protocol format: @N t o c (object number 'o' is optional).
+    The error code is always the last element.
     :param message_parts: List of message parts from the @N response.
     :return: Human-readable error string.
     """
-    raw_msg = f"@N {message_parts[1]} {message_parts[2]} {message_parts[3]}"
-    error_code = message_parts[3]
+    raw_msg = " ".join(message_parts)
+    error_code = message_parts[-1]
     description = ERROR_CODES.get(error_code, f"Unknown error message ({error_code})")
     return f"{description}: {raw_msg}"
 
@@ -26,7 +28,7 @@ def report_error_state(mqtt_client, error):
     state_topic = "cardio2e/errors/state"
     error_state_payload = {
         "error": error,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     mqtt_client.publish(state_topic, json.dumps(error_state_payload), retain=True)
     _LOGGER.info("Published state for error: %s", error)
