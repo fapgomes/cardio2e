@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.0.7 - 2026-04-12
+
+### Fixes
+- Fix periodic sync causing covers to physically move — the `@G C` query made the Cardio2e re-issue position commands to the motor
+- Cover states are now cached in memory and republished from cache during sync instead of querying the hardware
+
 ## v2.0.6 - 2026-03-08
 
 ### Features

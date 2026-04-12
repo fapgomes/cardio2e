@@ -35,7 +35,13 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _sync_all_entities(serial_conn, mqtt_client, config, app_state):
-    """Re-query state of all known entities and republish to MQTT."""
+    """Re-query state of all known entities and republish to MQTT.
+
+    Covers are republished from the cached state instead of querying
+    the Cardio2e via RS-232, because the ``@G C`` query causes the
+    controller to re-issue the position command to the motor, making
+    the cover physically move.
+    """
     _LOGGER.info("Starting periodic entity sync...")
     count = 0
 
@@ -48,14 +54,24 @@ def _sync_all_entities(serial_conn, mqtt_client, config, app_state):
     _get_entity_state(serial_conn, mqtt_client, 1, "S", config, app_state)
     count += 1
 
-    # L, R, C, H, T: iterate known IDs
-    for entity_type in ("L", "R", "C", "H", "T"):
+    # L, R, H, T: iterate known IDs and query via RS-232
+    for entity_type in ("L", "R", "H", "T"):
         entity_ids = app_state.get_known_entity_ids(entity_type)
         for entity_id in entity_ids:
             _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, app_state)
             count += 1
 
-    _LOGGER.info("Periodic entity sync complete: %d queries sent.", count)
+    # C (covers): republish from cache only — do NOT query RS-232
+    for entity_id in app_state.get_known_entity_ids("C"):
+        cached = app_state.get_entity_state("C", entity_id)
+        if cached is not None:
+            mqtt_client.publish(f"cardio2e/cover/state/{entity_id}", cached, retain=True)
+            _LOGGER.debug("Cover %d sync: republished cached state %s", entity_id, cached)
+        else:
+            _LOGGER.warning("Cover %d sync: no cached state, skipping.", entity_id)
+        count += 1
+
+    _LOGGER.info("Periodic entity sync complete: %d entities synced.", count)
 
 
 def _publish_heartbeat(mqtt_client, app_state):
@@ -263,6 +279,7 @@ def _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, 
 
     elif entity_type == "C" and len(message_parts) >= 4:
         state = message_parts[3]
+        app_state.set_entity_state("C", entity_id, state)
         mqtt_client.publish(f"cardio2e/cover/state/{entity_id}", state, retain=True)
         return state
 

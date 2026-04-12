@@ -81,6 +81,7 @@ class AppState(object):
         self._hvac_states = {}
         self._bypass_states = ""
         self._entity_names = {}  # {(entity_type, entity_id): name}
+        self._entity_states = {}  # {(entity_type, entity_id): last_known_state}
         # Diagnostics counters (atomic increments via lock)
         self._messages_processed = 0
         self._errors_count = 0
@@ -148,6 +149,16 @@ class AppState(object):
             return sorted(
                 eid for etype, eid in self._entity_names if etype == entity_type
             )
+
+    def set_entity_state(self, entity_type, entity_id, state):
+        """Cache the last known state of an entity."""
+        with self._lock:
+            self._entity_states[(entity_type, int(entity_id))] = state
+
+    def get_entity_state(self, entity_type, entity_id):
+        """Return the cached state for an entity, or None if not cached."""
+        with self._lock:
+            return self._entity_states.get((entity_type, int(entity_id)))
 
     @property
     def lock(self):
