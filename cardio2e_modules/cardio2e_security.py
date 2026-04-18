@@ -17,6 +17,8 @@ def handle_set_command(serial_conn, topic, payload, config):
         _LOGGER.error("Security ID invalid on topic: %s", topic)
         return
 
+    payload = payload.upper()
+
     if payload == "ARMED_AWAY":
         command = f"A {config.alarm_code}"
     elif payload == "DISARMED":

@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.0.8 - 2026-04-18
+
+### Fixes
+- Redact alarm code from RS-232 command logs (security commands now logged as `A ****` / `D ****`)
+
+### Cleanup
+- Remove global `.upper()` on MQTT payloads in `_on_message`; each handler normalizes case locally as needed
+
 ## v2.0.7 - 2026-04-12
 
 ### Fixes

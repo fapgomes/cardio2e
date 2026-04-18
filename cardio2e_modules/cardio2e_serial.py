@@ -43,9 +43,19 @@ def send_command(serial_conn, entity_type, entity_id, state=None,
         else:
             command = f"@S {entity_type} {entity_id} {state}{CARDIO2E_TERMINATOR}"
 
+    # Redact alarm code from logs: security commands are "A <code>" or "D <code>"
+    if entity_type == "S" and state:
+        state_parts = state.split(maxsplit=1)
+        if len(state_parts) > 1:
+            log_command = f"@S {entity_type} {entity_id} {state_parts[0]} ****{CARDIO2E_TERMINATOR}"
+        else:
+            log_command = command
+    else:
+        log_command = command
+
     try:
         with _serial_lock:
-            _LOGGER.info("Sending command to RS-232: %s", command)
+            _LOGGER.info("Sending command to RS-232: %s", log_command)
             serial_conn.write(command.encode())
             serial_conn.flush()
         return True

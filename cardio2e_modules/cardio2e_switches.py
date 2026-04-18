@@ -17,6 +17,8 @@ def handle_set_command(serial_conn, topic, payload):
         _LOGGER.error("Switch ID invalid on topic: %s", topic)
         return
 
+    payload = payload.upper()
+
     if payload == "ON":
         command = "O"
     elif payload == "OFF":

@@ -114,7 +114,7 @@ def _on_message(client, userdata, msg):
     get_entity_state_fn = userdata["get_entity_state_fn"]
 
     topic = msg.topic
-    payload = msg.payload.decode().upper()
+    payload = msg.payload.decode()
 
     if msg.retain:
         _LOGGER.debug("Ignoring retained message on topic %s: %s", topic, payload)

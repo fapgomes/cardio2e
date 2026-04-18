@@ -16,6 +16,8 @@ def handle_set_command(serial_conn, topic, payload, config):
         _LOGGER.error("Scenario ID invalid on topic: %s", topic)
         return
 
+    payload = payload.upper()
+
     if payload == "ON":
         send_command(serial_conn, "M", scenario_id)
     elif payload.isdigit():

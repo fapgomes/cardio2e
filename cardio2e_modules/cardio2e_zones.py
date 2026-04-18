@@ -47,6 +47,8 @@ def handle_bypass_command(serial_conn, topic, payload, app_state):
         _LOGGER.error("Invalid zone ID on topic: %s", topic)
         return
 
+    payload = payload.upper()
+
     with app_state.lock:
         _LOGGER.info("Current Zones: %s", app_state.bypass_states)
 

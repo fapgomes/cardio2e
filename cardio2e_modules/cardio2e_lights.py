@@ -15,6 +15,8 @@ def handle_set_command(serial_conn, topic, payload):
         _LOGGER.error("Invalid light ID on topic: %s", topic)
         return
 
+    payload = payload.upper()
+
     if payload == "ON":
         command = 100
     elif payload == "OFF":
