@@ -19,6 +19,11 @@ _LOGGER = logging.getLogger(__name__)
 # Global serial lock - prevents interleaved reads/writes from multiple threads
 _serial_lock = threading.Lock()
 
+# Minimum interval (seconds) between consecutive RS-232 commands.
+# The Cardio2e controller drops commands that arrive too close together.
+_MIN_COMMAND_INTERVAL = 0.15
+_last_command_time = 0.0
+
 
 def send_command(serial_conn, entity_type, entity_id, state=None,
                  heating_setpoint=None, cooling_setpoint=None,
@@ -54,10 +59,15 @@ def send_command(serial_conn, entity_type, entity_id, state=None,
         log_command = command
 
     try:
+        global _last_command_time
         with _serial_lock:
+            elapsed = time.monotonic() - _last_command_time
+            if elapsed < _MIN_COMMAND_INTERVAL:
+                time.sleep(_MIN_COMMAND_INTERVAL - elapsed)
             _LOGGER.info("Sending command to RS-232: %s", log_command)
             serial_conn.write(command.encode())
             serial_conn.flush()
+            _last_command_time = time.monotonic()
         return True
     except Exception as e:
         _LOGGER.error("Error sending command to RS-232: %s", e)

@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.0.9 - 2026-05-25
+
+### Fixes
+- Add 150ms minimum interval between consecutive RS-232 commands to prevent the Cardio2e controller from dropping commands sent in rapid succession
+
 ## v2.0.8 - 2026-04-18
 
 ### Fixes
