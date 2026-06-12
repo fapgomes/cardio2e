@@ -168,7 +168,9 @@ class AppState(object):
 
 def load_config(path="cardio2e.conf"):
     """Parse the .conf file and return an AppConfig instance."""
-    config = configparser.ConfigParser()
+    # Strip inline comments (e.g. "ncovers = 20  # number of covers"),
+    # otherwise they become part of the value and break int()/bool parsing.
+    config = configparser.ConfigParser(inline_comment_prefixes=("#", ";"))
     files_read = config.read(path)
     if not files_read:
         raise RuntimeError("Config file not found or not readable: %s" % path)
