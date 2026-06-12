@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.0.10 - 2026-06-12
+
+### Fixes
+- Strip inline comments when parsing the config file — values like `ncovers = 20  # comment` kept the comment as part of the value, crashing startup on int options, silently disabling boolean flags, emptying JSON lists and corrupting the alarm code
+- Add paho-mqtt 2.x compatibility: client is created with callback API VERSION2 when available, and connect/disconnect callbacks accept both 1.x and 2.x signatures
+
 ## v2.0.9 - 2026-05-25
 
 ### Fixes
