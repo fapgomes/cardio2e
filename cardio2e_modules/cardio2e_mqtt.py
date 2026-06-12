@@ -18,13 +18,30 @@ from . import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# paho-mqtt >= 2.0 requires an explicit callback API version and changes the
+# callback signatures; paho-mqtt 1.x has neither.
+_PAHO_V2 = hasattr(mqtt, "CallbackAPIVersion")
+
+
+def _is_failure(reason_code):
+    """True if a connect/disconnect result is a failure.
+
+    Accepts a paho 1.x int rc or a paho 2.x ReasonCode object.
+    """
+    if hasattr(reason_code, "is_failure"):
+        return reason_code.is_failure
+    return reason_code != 0
+
 
 def create_mqtt_client(config, serial_conn, app_state, get_entity_state_fn):
     """
     Create and configure the MQTT client with LWT.
     Returns the connected client with loop already started.
     """
-    client = mqtt.Client()
+    if _PAHO_V2:
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    else:
+        client = mqtt.Client()
 
     # Set LWT before connecting
     client.will_set(AVAILABILITY_TOPIC, PAYLOAD_NOT_AVAILABLE, qos=1, retain=True)
@@ -60,9 +77,13 @@ def publish_not_available(mqtt_client):
     mqtt_client.publish(AVAILABILITY_TOPIC, PAYLOAD_NOT_AVAILABLE, qos=1, retain=True)
 
 
-def _on_connect(client, userdata, flags, rc):
-    """Callback when the MQTT client connects or reconnects."""
-    if rc != 0:
+def _on_connect(client, userdata, flags, rc, properties=None):
+    """Callback when the MQTT client connects or reconnects.
+
+    Compatible with paho 1.x (rc is an int) and 2.x (rc is a ReasonCode,
+    with a trailing properties argument).
+    """
+    if _is_failure(rc):
         _LOGGER.error("MQTT connection failed with code %s. Will retry automatically.", rc)
         return
 
@@ -98,9 +119,14 @@ def subscribe_after_init(mqtt_client):
     _subscribe_all(mqtt_client)
 
 
-def _on_disconnect(client, userdata, rc):
-    """Callback when the MQTT client disconnects."""
-    if rc != 0:
+def _on_disconnect(client, userdata, flags_or_rc, reason_code=None, properties=None):
+    """Callback when the MQTT client disconnects.
+
+    paho 1.x calls this as (client, userdata, rc); paho 2.x calls it as
+    (client, userdata, disconnect_flags, reason_code, properties).
+    """
+    rc = flags_or_rc if reason_code is None else reason_code
+    if _is_failure(rc):
         _LOGGER.warning("Unexpected MQTT disconnection (code %s). Paho will auto-reconnect.", rc)
     else:
         _LOGGER.info("MQTT disconnected gracefully.")
