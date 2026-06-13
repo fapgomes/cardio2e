@@ -1,2 +1,4 @@
 cardio2e.conf
+__pycache__/
 cardio2e_modules/__pycache__
+.pytest_cache/
