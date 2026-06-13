@@ -3,7 +3,7 @@
 import logging
 import os
 import signal
-import threading
+import sys
 import time
 
 import serial
@@ -206,7 +206,7 @@ def main():
             logout(serial_conn)
             serial_conn.close()
         _LOGGER.info("Shutdown complete.")
-        exit(0)
+        sys.exit(0)
 
     signal.signal(signal.SIGTERM, handle_shutdown)
     signal.signal(signal.SIGINT, handle_shutdown)

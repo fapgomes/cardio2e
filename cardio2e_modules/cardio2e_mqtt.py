@@ -114,7 +114,11 @@ def _subscribe_all(client):
 
 def subscribe_after_init(mqtt_client):
     """Call after login/init is complete to start receiving commands."""
-    userdata = mqtt_client._userdata
+    try:
+        userdata = mqtt_client.user_data_get()
+    except AttributeError:
+        # Fallback for paho versions without the public getter
+        userdata = mqtt_client._userdata
     userdata["init_complete"] = True
     _subscribe_all(mqtt_client)
 
@@ -147,6 +151,13 @@ def _on_message(client, userdata, msg):
         return
 
     _LOGGER.debug("Message received on topic %s: %s", topic, payload)
+
+    # Record the last command for diagnostics. Redact numeric scene payloads,
+    # which may carry a security code (see scenarios handler).
+    recorded_payload = payload
+    if topic.startswith("cardio2e/scene/set/") and payload.isdigit():
+        recorded_payload = "****"
+    app_state.set_last_command(f"{topic} {recorded_payload}")
 
     if topic.startswith("cardio2e/light/set/"):
         cardio2e_lights.handle_set_command(serial_conn, topic, payload)

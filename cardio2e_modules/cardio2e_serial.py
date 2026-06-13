@@ -77,7 +77,7 @@ def send_command(serial_conn, entity_type, entity_id, state=None,
 def query_name(serial_conn, entity_id, entity_type, max_retries=3, timeout=10):
     """
     Query the name of an entity via RS-232.
-    Returns (entity_id_from_response, entity_name) or None on failure.
+    Returns the entity name (str) or None on failure.
     """
     command = f"@G N {entity_type} {entity_id}{CARDIO2E_TERMINATOR}"
     attempts = 0

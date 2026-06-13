@@ -3,7 +3,6 @@
 import datetime
 import json
 import logging
-import re
 import time
 
 from .cardio2e_serial import send_date, query_state, _serial_lock
@@ -15,14 +14,12 @@ from . import (
     cardio2e_hvac,
     cardio2e_security,
     cardio2e_zones,
-    cardio2e_autodiscovery,
 )
 from .cardio2e_constants import (
     HVAC_CODE_TO_MODE,
     FAN_CODE_TO_STATE,
     SECURITY_CODE_TO_STATE,
     SWITCH_CODE_TO_STATE,
-    TEMP_CODE_TO_STATUS,
     AVAILABILITY_TOPIC,
     PAYLOAD_AVAILABLE,
     PAYLOAD_NOT_AVAILABLE,
@@ -275,7 +272,7 @@ def _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, 
         state = message_parts[3]
         switch_state = SWITCH_CODE_TO_STATE.get(state, "OFF")
         mqtt_client.publish(f"cardio2e/switch/state/{entity_id}", switch_state, retain=True)
-        return state
+        return switch_state
 
     elif entity_type == "C" and len(message_parts) >= 4:
         state = message_parts[3]
@@ -309,14 +306,14 @@ def _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, 
 
     elif entity_type == "Z" and len(message_parts) >= 4:
         zone_states = message_parts[3]
-        for zone_id in range(1, min(16, len(zone_states)) + 1):
+        for zone_id in range(1, len(zone_states) + 1):
             zone_state = cardio2e_zones.interpret_zone_character(zone_states[zone_id - 1], zone_id, config.zones_normal_as_off)
             mqtt_client.publish(f"cardio2e/zone/state/{zone_id}", zone_state, retain=True)
         return zone_states
 
     elif entity_type == "B" and len(message_parts) >= 4:
         states = message_parts[3]
-        for zone_id in range(1, min(16, len(states)) + 1):
+        for zone_id in range(1, len(states) + 1):
             bypass_state = cardio2e_zones.interpret_bypass_character(states[zone_id - 1])
             mqtt_client.publish(f"cardio2e/zone/bypass/state/{zone_id}", bypass_state, retain=True)
         return states
