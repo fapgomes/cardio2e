@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.0.11 - 2026-06-13
+
+### Fixes
+- Accept negative temperature readings — the `@I T` parser dropped sub-zero values (e.g. `-1.5`), so cold-day temperatures never reached MQTT/HA
+
+### Cleanup
+- Remove unused imports (`threading` in main; `re`, `TEMP_CODE_TO_STATUS`, `cardio2e_autodiscovery` in listener)
+- Use `sys.exit()` instead of the site-module builtin `exit()` in the signal handler
+- `_get_entity_state` returns the mapped switch state (`ON`/`OFF`) for type R, matching type L
+- Drop the hardcoded 16-zone cap in `_get_entity_state` to match the other zone-iteration paths
+- `subscribe_after_init` uses the public `user_data_get()` API with a fallback for older paho versions
+- Populate the diagnostics `last_command` field (previously always empty); numeric scene payloads are redacted as they may carry a security code
+- Fix `query_name` docstring
+
 ## v2.0.10 - 2026-06-12
 
 ### Fixes
