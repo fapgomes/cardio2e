@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.0.12 - 2026-06-13
+
+### Cleanup
+- Rename the third parameter of `send_command` to `entity_id_or_value` and document that the date command (`D`) uses it as the timestamp payload rather than an entity id (no behavioural change)
+
 ## v2.0.11 - 2026-06-13
 
 ### Fixes
