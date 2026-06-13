@@ -16,7 +16,7 @@ from cardio2e_modules.cardio2e_listener import listen_for_updates, _get_entity_s
 from cardio2e_modules.cardio2e_autodiscovery import publish_config as publish_autodiscovery_config
 from cardio2e_modules import cardio2e_errors, cardio2e_covers, cardio2e_lights, cardio2e_switches, cardio2e_security, cardio2e_hvac, cardio2e_zones, cardio2e_scenarios
 
-VERSION = "2.0.12"
+VERSION = "2.0.13"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -191,7 +191,7 @@ def main():
         logging.getLogger().addHandler(syslog_handler)
         _LOGGER.info("Syslog enabled: %s:%d", cfg.syslog_address, cfg.syslog_port)
 
-    _LOGGER.info("Cardio2e v%s starting...", VERSION)
+    _LOGGER.info("Cardio2e version v%s starting...", VERSION)
 
     serial_conn = None
     mqtt_client = None

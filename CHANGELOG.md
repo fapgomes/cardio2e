@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.0.13 - 2026-06-13
+
+### Cleanup
+- Reword the startup log line to "Cardio2e version v%s starting..."
+
 ## v2.0.12 - 2026-06-13
 
 ### Cleanup
