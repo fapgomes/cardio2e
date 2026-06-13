@@ -25,12 +25,16 @@ _MIN_COMMAND_INTERVAL = 0.15
 _last_command_time = 0.0
 
 
-def send_command(serial_conn, entity_type, entity_id, state=None,
+def send_command(serial_conn, entity_type, entity_id_or_value, state=None,
                  heating_setpoint=None, cooling_setpoint=None,
                  fan_state=None, mode=None):
     """
     Send a command to the RS-232 bus.
     For HVAC commands, all setpoint/fan/mode params are required.
+
+    ``entity_id_or_value`` is normally the entity id (light, switch, ...),
+    but for the date command (entity_type "D") it carries the timestamp
+    payload instead, since both map to the same third field of ``@S``.
     Returns True on success, False on error.
     """
     if entity_type == "H":
@@ -41,18 +45,18 @@ def send_command(serial_conn, entity_type, entity_id, state=None,
         fan_state_code = FAN_STATE_TO_CODE.get(fan_state, "S")
         mode_code = HVAC_MODE_TO_CODE.get(mode, "O")
 
-        command = f"@S H {entity_id} {heating_setpoint} {cooling_setpoint} {fan_state_code} {mode_code}{CARDIO2E_TERMINATOR}"
+        command = f"@S H {entity_id_or_value} {heating_setpoint} {cooling_setpoint} {fan_state_code} {mode_code}{CARDIO2E_TERMINATOR}"
     else:
         if state is None:
-            command = f"@S {entity_type} {entity_id}{CARDIO2E_TERMINATOR}"
+            command = f"@S {entity_type} {entity_id_or_value}{CARDIO2E_TERMINATOR}"
         else:
-            command = f"@S {entity_type} {entity_id} {state}{CARDIO2E_TERMINATOR}"
+            command = f"@S {entity_type} {entity_id_or_value} {state}{CARDIO2E_TERMINATOR}"
 
     # Redact alarm code from logs: security commands are "A <code>" or "D <code>"
     if entity_type == "S" and state:
         state_parts = state.split(maxsplit=1)
         if len(state_parts) > 1:
-            log_command = f"@S {entity_type} {entity_id} {state_parts[0]} ****{CARDIO2E_TERMINATOR}"
+            log_command = f"@S {entity_type} {entity_id_or_value} {state_parts[0]} ****{CARDIO2E_TERMINATOR}"
         else:
             log_command = command
     else:

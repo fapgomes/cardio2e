@@ -80,7 +80,7 @@ def handle_set_command(serial_conn, mqtt_client, topic, payload, app_state):
         send_command(
             serial_conn=serial_conn,
             entity_type="H",
-            entity_id=hvac_id,
+            entity_id_or_value=hvac_id,
             heating_setpoint=heating_setpoint,
             cooling_setpoint=cooling_setpoint,
             fan_state=fan_state,
