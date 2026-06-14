@@ -5,6 +5,7 @@ contention between the listener thread and MQTT callback thread.
 """
 
 import logging
+import queue
 import threading
 import time
 
@@ -23,6 +24,45 @@ _serial_lock = threading.Lock()
 # The Cardio2e controller drops commands that arrive too close together.
 _MIN_COMMAND_INTERVAL = 0.15
 _last_command_time = 0.0
+
+# Pending query coordination: list of (predicate, queue). The reader thread
+# delivers a matching line to the first waiting request; everything else is
+# dispatched as a spontaneous update.
+_pending_lock = threading.Lock()
+_pending = []  # list of (predicate, queue.Queue)
+
+# Set while the SerialReader thread owns the port (steady state). When clear
+# (bootstrap), queries read the port directly.
+_reader_active = threading.Event()
+
+
+def _register(predicate):
+    """Register a pending request; returns the queue the response lands on."""
+    q = queue.Queue(maxsize=1)
+    with _pending_lock:
+        _pending.append((predicate, q))
+    return q
+
+
+def _unregister(q):
+    with _pending_lock:
+        _pending[:] = [(p, qq) for (p, qq) in _pending if qq is not q]
+
+
+def _deliver_to_pending(parts, raw_line):
+    """If a pending request matches `parts`, hand it `raw_line`. Returns True
+    if the line was consumed by a pending request (and must not be dispatched)."""
+    with _pending_lock:
+        for i, (predicate, q) in enumerate(_pending):
+            try:
+                matched = predicate(parts)
+            except Exception:
+                matched = False
+            if matched:
+                del _pending[i]
+                q.put(raw_line)
+                return True
+    return False
 
 
 def _write(serial_conn, command, log_command=None):
