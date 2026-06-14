@@ -39,7 +39,10 @@ def initialize_scenarios(serial_conn, mqtt_client, config, app_state):
         entity_name = "Scenario %d" % scenario_id
 
         if config.fetch_scenario_names:
-            fetched_name = query_name(serial_conn, scenario_id, "M")
+            # Scenarios are iterated blindly over 1..nscenarios, so undefined
+            # slots never answer. Use a short timeout/retry so a gap costs a
+            # couple of seconds instead of 30s — real scenarios answer in <1s.
+            fetched_name = query_name(serial_conn, scenario_id, "M", max_retries=2, timeout=2)
             if fetched_name:
                 entity_name = fetched_name
 
