@@ -129,61 +129,80 @@ def send_command(serial_conn, entity_type, entity_id_or_value, state=None,
         return False
 
 
+def _direct_request(serial_conn, command, predicate, timeout):
+    """Bootstrap-mode request: write, then read the port directly until a line
+    matches `predicate`. Non-matching lines are discarded (legacy behaviour).
+    Returns the matched raw line or None."""
+    _write(serial_conn, command)
+    with _serial_lock:
+        start_time = time.time()
+        buffer = ""
+        while time.time() - start_time < timeout:
+            waiting = serial_conn.in_waiting
+            if waiting > 0:
+                buffer += serial_conn.read(waiting).decode(errors="ignore")
+                while "\r" in buffer or "\n" in buffer:
+                    cr = buffer.find("\r")
+                    lf = buffer.find("\n")
+                    pos = lf if cr == -1 else cr if lf == -1 else min(cr, lf)
+                    line = buffer[:pos].strip()
+                    buffer = buffer[pos + 1:].lstrip("\r\n")
+                    if line and predicate(line.split()):
+                        return line
+            else:
+                time.sleep(0.005)
+    return None
+
+
+def _coordinated_request(serial_conn, command, predicate, timeout):
+    """Steady-state request: register a pending entry, write, and wait for the
+    reader thread to deliver a matching line. Returns the raw line or None."""
+    q = _register(predicate)
+    try:
+        _write(serial_conn, command)
+        try:
+            return q.get(timeout=timeout)
+        except queue.Empty:
+            return None
+    finally:
+        _unregister(q)
+
+
+def _send_and_match(serial_conn, command, predicate, timeout, max_retries):
+    """Send `command` and return the first line whose parts match `predicate`,
+    using the coordinated path when the reader owns the port, otherwise a direct
+    read. Retries up to `max_retries`. Returns the raw line or None."""
+    for _ in range(max_retries):
+        try:
+            if _reader_active.is_set():
+                line = _coordinated_request(serial_conn, command, predicate, timeout)
+            else:
+                line = _direct_request(serial_conn, command, predicate, timeout)
+        except Exception as e:
+            _LOGGER.error("Error during serial request %r: %s", command.strip(), e)
+            line = None
+        if line is not None:
+            return line
+    return None
+
+
 def query_name(serial_conn, entity_id, entity_type, max_retries=3, timeout=10):
     """
     Query the name of an entity via RS-232.
     Returns the entity name (str) or None on failure.
     """
     command = f"@G N {entity_type} {entity_id}{CARDIO2E_TERMINATOR}"
-    attempts = 0
-
     expected_prefix = f"@I N {entity_type}"
 
-    while attempts < max_retries:
-        try:
-            with _serial_lock:
-                serial_conn.write(command.encode())
-                _LOGGER.debug("Command sent to get entity name %s %d: %s", entity_type, entity_id, command.strip())
+    def predicate(parts):
+        return len(parts) >= 3 and parts[0] == "@I" and parts[1] == "N" and parts[2] == entity_type
 
-                start_time = time.time()
-                buffer = ""
-
-                while time.time() - start_time < timeout:
-                    waiting = serial_conn.in_waiting
-                    if waiting > 0:
-                        buffer += serial_conn.read(waiting).decode(errors="ignore")
-                        # Process complete lines
-                        while "\r" in buffer or "\n" in buffer:
-                            cr = buffer.find("\r")
-                            lf = buffer.find("\n")
-                            if cr == -1:
-                                pos = lf
-                            elif lf == -1:
-                                pos = cr
-                            else:
-                                pos = min(cr, lf)
-                            line = buffer[:pos].strip()
-                            buffer = buffer[pos + 1:].lstrip("\r\n")
-
-                            if line.startswith(expected_prefix):
-                                _LOGGER.debug("Complete message received for entity name %s %d: %s", entity_type, entity_id, line)
-                                name_part = line.split(expected_prefix, 1)[-1].strip()
-                                entity_name = name_part.split("@")[0].strip()
-                                return entity_name
-                            elif line:
-                                _LOGGER.debug("Message ignored during name search: %s", line)
-                    else:
-                        time.sleep(0.005)
-
-            attempts += 1
-            _LOGGER.debug("Attempt %d failed to get the name of entity %s %d. Trying again.", attempts, entity_type, entity_id)
-
-        except Exception as e:
-            _LOGGER.error("Error getting entity name %s %d: %s", entity_type, entity_id, e)
-            attempts += 1
-
-    _LOGGER.warning("Could not get entity name %s %d after %d attempts.", entity_type, entity_id, max_retries)
-    return None
+    line = _send_and_match(serial_conn, command, predicate, timeout, max_retries)
+    if line is None:
+        _LOGGER.warning("Could not get entity name %s %s after %d attempts.", entity_type, entity_id, max_retries)
+        return None
+    name_part = line.split(expected_prefix, 1)[-1].strip()
+    return name_part.split("@")[0].strip()
 
 
 def query_state(serial_conn, entity_id, entity_type, timeout=0.5, max_retries=5):
@@ -192,44 +211,20 @@ def query_state(serial_conn, entity_id, entity_type, timeout=0.5, max_retries=5)
     Returns the raw message parts list on success, or None on failure.
     """
     command = f"@G {entity_type} 1{CARDIO2E_TERMINATOR}" if entity_type == "Z" else f"@G {entity_type} {entity_id}{CARDIO2E_TERMINATOR}"
-    expected_prefix = f"@I {entity_type} "
-    attempts = 0
 
-    while attempts < max_retries:
-        try:
-            with _serial_lock:
-                serial_conn.write(command.encode())
-                _LOGGER.info("Sent command %s to get entity %s %d state (try %d / %d)", command.strip(), entity_type, entity_id, attempts + 1, max_retries)
+    if entity_type in ("Z", "B"):
+        def predicate(parts):
+            return len(parts) >= 2 and parts[0] == "@I" and parts[1] == entity_type
+    else:
+        def predicate(parts):
+            return (len(parts) >= 3 and parts[0] == "@I"
+                    and parts[1] == entity_type and parts[2] == str(entity_id))
 
-                start_time = time.time()
-                buffer = ""
-
-                while time.time() - start_time < timeout:
-                    waiting = serial_conn.in_waiting
-                    if waiting > 0:
-                        buffer += serial_conn.read(waiting).decode(errors="ignore")
-                        # Check for complete message (terminated by \r or \n)
-                        for terminator in ("\r", "\n"):
-                            if terminator in buffer:
-                                line, buffer = buffer.split(terminator, 1)
-                                line = line.strip()
-                                if line.startswith(expected_prefix):
-                                    _LOGGER.debug("Message received: %s", line)
-                                    return line.split()
-                                elif line:
-                                    _LOGGER.debug("Message ignored: %s", line)
-                    else:
-                        time.sleep(0.005)
-
-            _LOGGER.warning("Incorrect answer for entity %s %d, attempt %d by %d.", entity_type, entity_id, attempts + 1, max_retries)
-            attempts += 1
-
-        except Exception as e:
-            _LOGGER.error("Error getting state of entity %s %d: %s", entity_type, entity_id, e)
-            attempts += 1
-
-    _LOGGER.warning("Could not get state for entity %s %d after %d attempts.", entity_type, entity_id, max_retries)
-    return None
+    line = _send_and_match(serial_conn, command, predicate, timeout, max_retries)
+    if line is None:
+        _LOGGER.warning("Could not get state for entity %s %s after %d attempts.", entity_type, entity_id, max_retries)
+        return None
+    return line.split()
 
 
 def login(serial_conn, password, max_retries=5, timeout=10, post_ack_timeout=15):
