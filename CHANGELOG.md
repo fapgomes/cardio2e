@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.1.1 - 2026-06-14
+
+### Fixes
+- Stop re-querying bypass state with `@G B 1` after every zone bypass toggle. The controller rejects that command (`@N B 2`) and, fired per toggle, it flooded and garbled the RS-232 stream under rapid bypass changes. The new state is now published directly on set and republished from cache during sync.
+
 ## v2.1.0 - 2026-06-14
 
 ### Changed
