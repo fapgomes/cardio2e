@@ -59,3 +59,42 @@ class TestCoordinatedQuery:
             assert parts is None
         finally:
             cs._reader_active.clear()
+
+
+class TestSerialReaderProcessing:
+    def _make_reader(self, conn):
+        dispatched = []
+        reader = cs.SerialReader(conn, on_message=lambda msg, parts: dispatched.append((msg, parts)))
+        return reader, dispatched
+
+    def test_spontaneous_message_is_dispatched(self):
+        conn = FakeSerial()
+        reader, dispatched = self._make_reader(conn)
+        reader._buffer = "@I L 5 100\r"
+        reader._process_buffer()
+        assert dispatched == [("@I L 5 100", ["@I", "L", "5", "100"])]
+
+    def test_pending_query_consumes_matching_line_no_dispatch(self):
+        conn = FakeSerial()
+        reader, dispatched = self._make_reader(conn)
+        q = cs._register(lambda p: p[1] == "L" and p[2] == "5")
+        try:
+            reader._buffer = "@I L 5 100\r"
+            reader._process_buffer()
+            assert dispatched == []
+            assert q.get_nowait() == "@I L 5 100"
+        finally:
+            cs._unregister(q)
+
+    def test_spontaneous_during_pending_query_is_not_lost(self):
+        # nº5 regression: a different entity updating while a query is pending
+        conn = FakeSerial()
+        reader, dispatched = self._make_reader(conn)
+        q = cs._register(lambda p: p[1] == "L" and p[2] == "5")
+        try:
+            reader._buffer = "@I L 3 100\r@I L 5 100\r"
+            reader._process_buffer()
+            assert ("@I L 3 100", ["@I", "L", "3", "100"]) in dispatched
+            assert q.get_nowait() == "@I L 5 100"
+        finally:
+            cs._unregister(q)

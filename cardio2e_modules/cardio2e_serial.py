@@ -309,3 +309,72 @@ def logout(serial_conn):
 def send_date(serial_conn, time_command):
     """Send the current date/time to cardio2e."""
     return send_command(serial_conn, "D", time_command)
+
+
+def _split_messages(received_message):
+    """Split one raw RS-232 frame into (msg, parts) pairs.
+
+    Mirrors the legacy listener splitting: unescape ``#015``, split on ``@``,
+    then on ``\\r``. Yields ('@...' line, parts list)."""
+    received_message = received_message.replace('#015', '\r')
+    pieces = []
+    for part in received_message.split('@'):
+        pieces.extend(part.split('\r'))
+    for piece in pieces:
+        if not piece:
+            continue
+        msg = '@' + piece.strip()
+        yield msg, msg.split()
+
+
+class SerialReader(threading.Thread):
+    """Owns all reads from the serial port. Parses lines and either fulfils a
+    pending query or hands the line to ``on_message`` for dispatch."""
+
+    def __init__(self, serial_conn, on_message):
+        super().__init__(daemon=True, name="cardio2e-serial-reader")
+        self._serial = serial_conn
+        self._on_message = on_message
+        self._stop = threading.Event()
+        self._buffer = ""
+
+    def stop(self):
+        self._stop.set()
+
+    def _process_buffer(self):
+        while "\r" in self._buffer or "\n" in self._buffer:
+            cr_pos = self._buffer.find("\r")
+            lf_pos = self._buffer.find("\n")
+            pos = lf_pos if cr_pos == -1 else cr_pos if lf_pos == -1 else min(cr_pos, lf_pos)
+            received_message = self._buffer[:pos].strip()
+            rest = self._buffer[pos + 1:]
+            if rest and rest[0] in ("\r", "\n"):
+                rest = rest[1:]
+            self._buffer = rest
+            if not received_message:
+                continue
+            for msg, parts in _split_messages(received_message):
+                if _deliver_to_pending(parts, msg):
+                    continue
+                self._on_message(msg, parts)
+
+    def run(self):
+        _reader_active.set()
+        try:
+            while not self._stop.is_set():
+                if not self._serial.is_open:
+                    break
+                try:
+                    waiting = self._serial.in_waiting
+                    raw = self._serial.read(waiting).decode(errors="ignore") if waiting > 0 else ""
+                    if not raw:
+                        time.sleep(0.01)
+                        continue
+                    self._buffer += raw
+                    self._process_buffer()
+                except Exception as e:
+                    _LOGGER.error("Serial reader error: %s", e)
+                    break
+        finally:
+            _reader_active.clear()
+            _LOGGER.info("Serial reader stopped.")

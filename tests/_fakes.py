@@ -53,6 +53,10 @@ class FakeSerial:
         self._read_buffer = self._read_buffer[n:]
         return chunk
 
+    def feed(self, data):
+        """Append bytes to be returned by subsequent reads."""
+        self._read_buffer += data
+
     def last_written_str(self):
         return self.written[-1].decode() if self.written else None
 
