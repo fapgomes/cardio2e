@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.1.0 - 2026-06-14
+
+### Changed
+- Rework the RS-232 layer around a single reader thread that owns all reads. Spontaneous `@I` updates arriving during a query are no longer lost (nº5); the periodic sync no longer blocks message reception (nº8); all writes go through one throttled write point (nº9).
+- Queries now match responses by entity type **and** id (previously type only), so a query no longer captures an unrelated update of the same type.
+- Login no longer logs the password (redacted).
+
 ## v2.0.13 - 2026-06-13
 
 ### Cleanup
