@@ -204,6 +204,10 @@ def main():
             publish_not_available(mqtt_client)
         if serial_conn and serial_conn.is_open:
             logout(serial_conn)
+            # The SerialReader is a daemon thread that owns reads; closing the
+            # port makes its read loop exit. No explicit join is needed here —
+            # listen_for_updates owns the reader lifecycle, and sys.exit ends the
+            # daemon thread regardless.
             serial_conn.close()
         _LOGGER.info("Shutdown complete.")
         sys.exit(0)
