@@ -3,9 +3,10 @@
 import datetime
 import json
 import logging
+import threading
 import time
 
-from .cardio2e_serial import send_date, query_state, _serial_lock
+from .cardio2e_serial import send_date, query_state, SerialReader
 from . import (
     cardio2e_errors,
     cardio2e_lights,
@@ -105,20 +106,28 @@ def _publish_diagnostics_autodiscovery(mqtt_client):
 
 
 def listen_for_updates(serial_conn, mqtt_client, config, app_state):
-    """Listen for RS-232 updates and dispatch to entity handlers."""
+    """Run the housekeeping loop while a SerialReader thread owns the port.
+
+    Returns when the connection is lost (reader stopped), so the caller can
+    reconnect.
+    """
     last_time_sent = time.monotonic()
     last_heartbeat = time.monotonic()
     last_sync = time.monotonic()
-    buffer = ""
 
     # Publish diagnostics autodiscovery on start
     _publish_diagnostics_autodiscovery(mqtt_client)
 
-    while True:
-        if not serial_conn.is_open:
-            _LOGGER.debug("The serial connection was closed.")
-            break
-        try:
+    def on_message(msg, message_parts):
+        _LOGGER.info("Processing individual message: %s", msg)
+        app_state.increment_messages()
+        _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_parts)
+
+    reader = SerialReader(serial_conn, on_message)
+    reader.start()
+
+    try:
+        while serial_conn.is_open and reader.is_alive():
             now = time.monotonic()
 
             # Send date periodically
@@ -134,67 +143,18 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state):
                 _publish_heartbeat(mqtt_client, app_state)
                 last_heartbeat = now
 
-            # Periodic entity sync
+            # Periodic entity sync (queries are served by the reader, so this
+            # no longer blocks message reception)
             if config.sync_interval > 0 and (now - last_sync) >= config.sync_interval:
                 _sync_all_entities(serial_conn, mqtt_client, config, app_state)
                 last_sync = now
 
-            # Read all available bytes at once
-            with _serial_lock:
-                waiting = serial_conn.in_waiting
-                if waiting > 0:
-                    raw = serial_conn.read(waiting).decode(errors="ignore")
-                else:
-                    raw = ""
-            if raw:
-                buffer += raw
-            else:
-                time.sleep(0.01)
-                continue
+            time.sleep(0.5)
+    finally:
+        reader.stop()
+        reader.join(timeout=2)
 
-            # Process complete messages (terminated by \r or \n)
-            while "\r" in buffer or "\n" in buffer:
-                cr_pos = buffer.find("\r")
-                lf_pos = buffer.find("\n")
-                if cr_pos == -1:
-                    pos = lf_pos
-                elif lf_pos == -1:
-                    pos = cr_pos
-                else:
-                    pos = min(cr_pos, lf_pos)
-
-                received_message = buffer[:pos].strip()
-                rest = buffer[pos + 1:]
-                if rest and rest[0] in ("\r", "\n"):
-                    rest = rest[1:]
-                buffer = rest
-
-                if not received_message:
-                    continue
-
-                _LOGGER.debug("RS-232 message received: %s", received_message)
-
-                received_message = received_message.replace('#015', '\r')
-                messages = []
-                for part in received_message.split('@'):
-                    sub_parts = part.split('\r')
-                    messages.extend(sub_parts)
-
-                for msg in messages:
-                    if not msg:
-                        continue
-
-                    msg = '@' + msg.strip()
-                    _LOGGER.info("Processing individual message: %s", msg)
-                    message_parts = msg.split()
-
-                    app_state.increment_messages()
-                    _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_parts)
-
-        except Exception as e:
-            _LOGGER.error("Error reading from RS-232 loop: %s", e)
-            app_state.increment_errors()
-            time.sleep(1)
+    _LOGGER.warning("Serial reader stopped; connection considered lost.")
 
 
 def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_parts):
@@ -220,8 +180,15 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
         elif entity_type == "M":
             _LOGGER.info("OK for action %s", app_state.get_entity_label("scenario", "M", entity_id))
         elif entity_type == "B" and entity_id == 1:
-            _get_entity_state(serial_conn, mqtt_client, 1, "B", config, app_state)
-            _LOGGER.info("Bypass zones re-publish.")
+            # Run off the reader thread: _get_entity_state issues a coordinated
+            # query that waits on the reader, so calling it inline here would
+            # deadlock (the reader would be waiting on itself).
+            threading.Thread(
+                target=_get_entity_state,
+                args=(serial_conn, mqtt_client, 1, "B", config, app_state),
+                daemon=True,
+            ).start()
+            _LOGGER.info("Bypass zones re-publish (async).")
 
     # NACK messages (@N)
     elif len(message_parts) >= 3 and message_parts[0] == "@N":

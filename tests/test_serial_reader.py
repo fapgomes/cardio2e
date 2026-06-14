@@ -98,3 +98,38 @@ class TestSerialReaderProcessing:
             assert q.get_nowait() == "@I L 5 100"
         finally:
             cs._unregister(q)
+
+
+class TestReaderQueryIntegration:
+    def test_reader_thread_serves_a_coordinated_query(self):
+        # Response arrives shortly after the query is issued (as on real hardware),
+        # so the pending request is registered before the reader sees the line.
+        conn = FakeSerial()
+        reader = cs.SerialReader(conn, on_message=lambda msg, parts: None)
+        reader.start()
+
+        def respond():
+            time.sleep(0.1)
+            conn.feed(b"@I L 5 100\r")
+        threading.Thread(target=respond, daemon=True).start()
+
+        try:
+            parts = cs.query_state(conn, 5, "L", timeout=2.0, max_retries=1)
+            assert parts == ["@I", "L", "5", "100"]
+        finally:
+            reader.stop()
+            reader.join(timeout=2)
+
+    def test_reader_dispatches_spontaneous_update_to_handler(self):
+        conn = FakeSerial(to_read=b"@I L 7 0\r")
+        seen = []
+        reader = cs.SerialReader(conn, on_message=lambda msg, parts: seen.append(parts))
+        reader.start()
+        try:
+            deadline = time.time() + 2
+            while not seen and time.time() < deadline:
+                time.sleep(0.01)
+            assert seen == [["@I", "L", "7", "0"]]
+        finally:
+            reader.stop()
+            reader.join(timeout=2)
