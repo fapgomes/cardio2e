@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.1.3 - 2026-06-14
+
+### Fixes
+- Clean shutdown on SIGTERM/SIGINT. The signal handler no longer calls `sys.exit()` (which raced with daemon-thread/interpreter teardown and surfaced a spurious "'Event' object is not callable" error and a "Bad file descriptor" reader error). It now closes the port to unblock the listener, which stops the reader and lets the process exit cleanly. The reader logs a closed port at INFO instead of ERROR during shutdown.
+
 ## v2.1.2 - 2026-06-14
 
 ### Fixes
