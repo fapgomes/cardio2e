@@ -3,7 +3,6 @@
 import datetime
 import json
 import logging
-import threading
 import time
 
 from .cardio2e_serial import send_date, query_state, SerialReader
@@ -43,9 +42,14 @@ def _sync_all_entities(serial_conn, mqtt_client, config, app_state):
     _LOGGER.info("Starting periodic entity sync...")
     count = 0
 
-    # Z and B: query with ID 1 (returns all zones/bypasses)
-    for entity_type in ("Z", "B"):
-        _get_entity_state(serial_conn, mqtt_client, 1, entity_type, config, app_state)
+    # Z (zones): query with ID 1 (returns all zones)
+    _get_entity_state(serial_conn, mqtt_client, 1, "Z", config, app_state)
+    count += 1
+
+    # B (bypass): republish from cache — the controller rejects @G B 1 (@N B 2)
+    bypass = app_state.bypass_states
+    if bypass:
+        cardio2e_zones.publish_bypass_states(mqtt_client, bypass)
         count += 1
 
     # S: security, always ID 1
@@ -179,16 +183,11 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
             _LOGGER.info("OK for action %s", app_state.get_entity_label("security", "S", entity_id))
         elif entity_type == "M":
             _LOGGER.info("OK for action %s", app_state.get_entity_label("scenario", "M", entity_id))
-        elif entity_type == "B" and entity_id == 1:
-            # Run off the reader thread: _get_entity_state issues a coordinated
-            # query that waits on the reader, so calling it inline here would
-            # deadlock (the reader would be waiting on itself).
-            threading.Thread(
-                target=_get_entity_state,
-                args=(serial_conn, mqtt_client, 1, "B", config, app_state),
-                daemon=True,
-            ).start()
-            _LOGGER.info("Bypass zones re-publish (async).")
+        elif entity_type == "B":
+            # Bypass set ack. The new state was already published by
+            # handle_bypass_command; we do NOT re-query the controller, which
+            # rejects @G B 1 (@N B 2) and garbles the stream when flooded.
+            _LOGGER.info("OK for bypass set.")
 
     # NACK messages (@N)
     elif len(message_parts) >= 3 and message_parts[0] == "@N":

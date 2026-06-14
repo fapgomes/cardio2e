@@ -37,7 +37,14 @@ def interpret_bypass_character(character):
         return "UNKNOWN"
 
 
-def handle_bypass_command(serial_conn, topic, payload, app_state):
+def publish_bypass_states(mqtt_client, states):
+    """Publish each zone's bypass state to MQTT from a states string."""
+    for zone_id in range(1, len(states) + 1):
+        bypass_state = interpret_bypass_character(states[zone_id - 1])
+        mqtt_client.publish(f"cardio2e/zone/bypass/state/{zone_id}", bypass_state, retain=True)
+
+
+def handle_bypass_command(serial_conn, mqtt_client, topic, payload, app_state):
     """Handle an MQTT bypass set command for a zone."""
     _LOGGER.debug("Entering bypass processing...")
 
@@ -71,8 +78,13 @@ def handle_bypass_command(serial_conn, topic, payload, app_state):
         try:
             success = send_command(serial_conn, "B", 1, "".join(zone_bypass_states))
             if success:
-                app_state.bypass_states = "".join(zone_bypass_states)
-                _LOGGER.info("Bypass states updated successfully: %s", app_state.bypass_states)
+                new_states = "".join(zone_bypass_states)
+                app_state.bypass_states = new_states
+                _LOGGER.info("Bypass states updated successfully: %s", new_states)
+                # Publish the known new state directly. We do NOT re-query the
+                # controller (@G B 1), which it rejects (@N B 2) and which, fired
+                # per toggle, floods and garbles the RS-232 stream.
+                publish_bypass_states(mqtt_client, new_states)
             else:
                 _LOGGER.warning("Bypass command failed, state not updated.")
         except Exception as e:
@@ -98,13 +110,9 @@ def process_zone_update(mqtt_client, message_parts, config, app_state):
 def process_bypass_update(mqtt_client, message_parts, app_state):
     """Process an @I B update from the serial listener."""
     states = message_parts[3]
-
-    for zone_id in range(1, len(states) + 1):
-        bypass_state_char = states[zone_id - 1]
-        bypass_state = interpret_bypass_character(bypass_state_char)
-
-        state_topic = f"cardio2e/zone/bypass/state/{zone_id}"
-        mqtt_client.publish(state_topic, bypass_state, retain=True)
+    with app_state.lock:
+        app_state.bypass_states = states
+    publish_bypass_states(mqtt_client, states)
 
 
 def process_login_zones(mqtt_client, message, serial_conn, config, get_name_fn):

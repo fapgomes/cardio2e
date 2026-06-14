@@ -36,12 +36,16 @@ class TestProcessBypassUpdate:
         assert mqtt.payload_for("cardio2e/zone/bypass/state/1") == "OFF"
         assert mqtt.payload_for("cardio2e/zone/bypass/state/2") == "ON"
 
+    def test_updates_cache(self, mqtt, app_state):
+        cardio2e_zones.process_bypass_update(mqtt, ["@I", "B", "1", "NYNN"], app_state)
+        assert app_state.bypass_states == "NYNN"
+
 
 class TestHandleBypassCommand:
-    def test_sets_bit_and_sends(self, serial_conn, app_state):
+    def test_sets_bit_and_sends(self, serial_conn, mqtt, app_state):
         app_state.bypass_states = "N" * 16
         cardio2e_zones.handle_bypass_command(
-            serial_conn, "cardio2e/zone/bypass/set/2", "ON", app_state
+            serial_conn, mqtt, "cardio2e/zone/bypass/set/2", "ON", app_state
         )
         written = serial_conn.last_written_str()
         assert written.startswith("@S B 1 ")
@@ -49,10 +53,21 @@ class TestHandleBypassCommand:
         assert states[1] == "Y"
         assert app_state.bypass_states[1] == "Y"
 
-    def test_defaults_when_state_missing(self, serial_conn, app_state):
+    def test_publishes_new_state_without_requery(self, serial_conn, mqtt, app_state):
+        # Regression: a bypass set must publish the new state directly and must
+        # NOT issue a @G B 1 re-query (only the @S B 1 set goes on the wire).
+        app_state.bypass_states = "N" * 16
+        cardio2e_zones.handle_bypass_command(
+            serial_conn, mqtt, "cardio2e/zone/bypass/set/2", "ON", app_state
+        )
+        assert mqtt.payload_for("cardio2e/zone/bypass/state/2") == "ON"
+        assert mqtt.payload_for("cardio2e/zone/bypass/state/1") == "OFF"
+        assert all("@G B" not in w for w in serial_conn.written_str())
+
+    def test_defaults_when_state_missing(self, serial_conn, mqtt, app_state):
         app_state.bypass_states = ""
         cardio2e_zones.handle_bypass_command(
-            serial_conn, "cardio2e/zone/bypass/set/1", "ON", app_state
+            serial_conn, mqtt, "cardio2e/zone/bypass/set/1", "ON", app_state
         )
         written = serial_conn.last_written_str()
         states = written[len("@S B 1 "):].rstrip("\r")

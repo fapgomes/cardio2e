@@ -179,7 +179,7 @@ def _on_message(client, userdata, msg):
         cardio2e_security.handle_set_command(serial_conn, topic, payload, config)
 
     elif topic.startswith("cardio2e/zone/bypass/set/"):
-        cardio2e_zones.handle_bypass_command(serial_conn, topic, payload, app_state)
+        cardio2e_zones.handle_bypass_command(serial_conn, client, topic, payload, app_state)
 
     elif topic.startswith("cardio2e/scene/set/"):
         cardio2e_scenarios.handle_set_command(serial_conn, topic, payload, config)
