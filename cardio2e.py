@@ -3,7 +3,6 @@
 import logging
 import os
 import signal
-import sys
 import time
 
 import serial
@@ -204,13 +203,11 @@ def main():
             publish_not_available(mqtt_client)
         if serial_conn and serial_conn.is_open:
             logout(serial_conn)
-            # The SerialReader is a daemon thread that owns reads; closing the
-            # port makes its read loop exit. No explicit join is needed here —
-            # listen_for_updates owns the reader lifecycle, and sys.exit ends the
-            # daemon thread regardless.
+            # Closing the port unblocks listen_for_updates: its housekeeping loop
+            # exits, stops/joins the reader thread, and returns, letting main()
+            # exit cleanly. We deliberately do NOT call sys.exit() from the signal
+            # handler — doing so raced with daemon-thread/interpreter teardown.
             serial_conn.close()
-        _LOGGER.info("Shutdown complete.")
-        sys.exit(0)
 
     signal.signal(signal.SIGTERM, handle_shutdown)
     signal.signal(signal.SIGINT, handle_shutdown)
@@ -250,6 +247,9 @@ def main():
             listen_for_updates(serial_conn, mqtt_client, cfg, app_state)
 
             # If we get here, the serial connection closed
+            if shutdown_requested[0]:
+                break
+
             _LOGGER.warning("Serial connection lost. Will reconnect...")
             publish_not_available(mqtt_client)
 
@@ -279,6 +279,15 @@ def main():
         # Exponential backoff
         time.sleep(backoff)
         backoff = min(backoff * 2, MAX_BACKOFF)
+
+    # Graceful exit: stop the MQTT client so no threads linger at teardown.
+    if mqtt_client:
+        try:
+            mqtt_client.loop_stop()
+            mqtt_client.disconnect()
+        except Exception:
+            pass
+    _LOGGER.info("Shutdown complete.")
 
 
 if __name__ == "__main__":

@@ -373,7 +373,12 @@ class SerialReader(threading.Thread):
                     self._buffer += raw
                     self._process_buffer()
                 except Exception as e:
-                    _LOGGER.error("Serial reader error: %s", e)
+                    if self._stop.is_set() or not self._serial.is_open:
+                        # Expected during shutdown/reconnect: the port was closed
+                        # under us. Not an error.
+                        _LOGGER.info("Serial reader: port closed, stopping.")
+                    else:
+                        _LOGGER.error("Serial reader error: %s", e)
                     break
         finally:
             _reader_active.clear()
