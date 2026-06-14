@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.1.2 - 2026-06-14
+
+### Fixes
+- Fail fast when fetching names of undefined scenario slots. With `nscenarios` spanning gaps (e.g. scenario 12 undefined while 13–20 exist), each missing slot stalled startup for 30s on the name query. Scenario name fetches now use a 2s timeout / 2 retries; real scenarios answer in well under a second.
+
 ## v2.1.1 - 2026-06-14
 
 ### Fixes
