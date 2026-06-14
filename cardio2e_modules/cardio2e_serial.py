@@ -25,6 +25,25 @@ _MIN_COMMAND_INTERVAL = 0.15
 _last_command_time = 0.0
 
 
+def _write(serial_conn, command, log_command=None):
+    """Single throttled write point for the RS-232 bus.
+
+    Serializes writes across threads and enforces the minimum inter-command
+    interval. Raises on I/O error (callers decide how to report it).
+    """
+    global _last_command_time
+    if log_command is None:
+        log_command = command
+    with _serial_lock:
+        elapsed = time.monotonic() - _last_command_time
+        if elapsed < _MIN_COMMAND_INTERVAL:
+            time.sleep(_MIN_COMMAND_INTERVAL - elapsed)
+        _LOGGER.info("Sending command to RS-232: %s", log_command)
+        serial_conn.write(command.encode())
+        serial_conn.flush()
+        _last_command_time = time.monotonic()
+
+
 def send_command(serial_conn, entity_type, entity_id_or_value, state=None,
                  heating_setpoint=None, cooling_setpoint=None,
                  fan_state=None, mode=None):
@@ -63,15 +82,7 @@ def send_command(serial_conn, entity_type, entity_id_or_value, state=None,
         log_command = command
 
     try:
-        global _last_command_time
-        with _serial_lock:
-            elapsed = time.monotonic() - _last_command_time
-            if elapsed < _MIN_COMMAND_INTERVAL:
-                time.sleep(_MIN_COMMAND_INTERVAL - elapsed)
-            _LOGGER.info("Sending command to RS-232: %s", log_command)
-            serial_conn.write(command.encode())
-            serial_conn.flush()
-            _last_command_time = time.monotonic()
+        _write(serial_conn, command, log_command)
         return True
     except Exception as e:
         _LOGGER.error("Error sending command to RS-232: %s", e)
@@ -196,9 +207,9 @@ def login(serial_conn, password, max_retries=5, timeout=10, post_ack_timeout=15)
 
     while attempts < max_retries:
         try:
+            _write(serial_conn, command, log_command=f"@S P I ****{CARDIO2E_TERMINATOR}")
             with _serial_lock:
-                serial_conn.write(command.encode())
-                _LOGGER.debug("Login command sent: %s", command.strip())
+                _LOGGER.debug("Login command sent.")
 
                 start_time = time.time()
                 buffer = ""
@@ -252,9 +263,8 @@ def logout(serial_conn):
     """Perform logout via RS-232."""
     command = f"@S P O{CARDIO2E_TERMINATOR}"
     try:
-        with _serial_lock:
-            serial_conn.write(command.encode())
-            _LOGGER.info("Logout command sent; no response required.")
+        _write(serial_conn, command)
+        _LOGGER.info("Logout command sent; no response required.")
         return True
     except Exception as e:
         _LOGGER.error("Error during cardio2e logout: %s", e)

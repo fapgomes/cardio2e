@@ -87,3 +87,18 @@ class TestQueryState:
     def test_returns_none_when_no_response(self):
         conn = FakeSerial(to_read=b"")
         assert query_state(conn, 5, "L", timeout=0.05, max_retries=1) is None
+
+
+class TestCentralWrite:
+    def test_write_sends_bytes_and_flushes(self, serial_conn):
+        from cardio2e_modules.cardio2e_serial import _write
+        _write(serial_conn, "@S L 1 100\r")
+        assert serial_conn.last_written_str() == "@S L 1 100\r"
+
+    def test_login_uses_central_write(self, serial_conn, monkeypatch):
+        import cardio2e_modules.cardio2e_serial as cs
+        calls = []
+        monkeypatch.setattr(cs, "_write", lambda conn, command, log_command=None: calls.append(command))
+        # No ACK in buffer -> login retries and fails fast, but must have written via _write
+        cs.login(serial_conn, "12345", max_retries=1, timeout=0.05, post_ack_timeout=0.05)
+        assert any(c.startswith("@S P I 12345") for c in calls)
