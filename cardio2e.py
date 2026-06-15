@@ -276,6 +276,9 @@ def main():
                 pass
             mqtt_client = None
 
+        # Count the reconnection for diagnostics
+        app_state.increment_reconnects()
+
         # Exponential backoff
         time.sleep(backoff)
         backoff = min(backoff * 2, MAX_BACKOFF)

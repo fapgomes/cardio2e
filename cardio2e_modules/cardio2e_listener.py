@@ -5,7 +5,7 @@ import json
 import logging
 import time
 
-from .cardio2e_serial import send_date, query_state, SerialReader
+from .cardio2e_serial import send_date, query_state, SerialReader, reader_active, pending_count
 from . import (
     cardio2e_errors,
     cardio2e_lights,
@@ -83,6 +83,8 @@ def _publish_heartbeat(mqtt_client, app_state):
 
     diag = app_state.get_diagnostics()
     diag["timestamp"] = timestamp
+    diag["reader_active"] = reader_active()
+    diag["pending_queries"] = pending_count()
     mqtt_client.publish("cardio2e/diagnostics/state", json.dumps(diag), retain=True)
     _LOGGER.debug("Heartbeat published: %s", timestamp)
 
@@ -124,7 +126,7 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state):
 
     def on_message(msg, message_parts):
         _LOGGER.info("Processing individual message: %s", msg)
-        app_state.increment_messages()
+        app_state.record_message()
         _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_parts)
 
     reader = SerialReader(serial_conn, on_message)
@@ -194,6 +196,7 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
         error_msg = cardio2e_errors.format_error_message(message_parts)
         cardio2e_errors.report_error_state(mqtt_client, error_msg)
         app_state.increment_errors()
+        app_state.set_last_error(error_msg)
         _LOGGER.info("\n#######\nNACK from cardio with transaction %s: %s", msg, error_msg)
 
     # Info/state update messages (@I)

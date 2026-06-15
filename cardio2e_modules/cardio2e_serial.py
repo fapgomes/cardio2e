@@ -49,6 +49,17 @@ def _unregister(q):
         _pending[:] = [(p, qq) for (p, qq) in _pending if qq is not q]
 
 
+def reader_active():
+    """True while the SerialReader thread owns the port (steady state)."""
+    return _reader_active.is_set()
+
+
+def pending_count():
+    """Number of in-flight query requests waiting for a response."""
+    with _pending_lock:
+        return len(_pending)
+
+
 def _deliver_to_pending(parts, raw_line):
     """If a pending request matches `parts`, hand it `raw_line`. Returns True
     if the line was consumed by a pending request (and must not be dispatched)."""

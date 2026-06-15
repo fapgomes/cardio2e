@@ -90,8 +90,8 @@ class TestAppStateEntityState:
 
 class TestAppStateDiagnostics:
     def test_counters_and_last_command(self, app_state):
-        app_state.increment_messages()
-        app_state.increment_messages()
+        app_state.record_message()
+        app_state.record_message()
         app_state.increment_errors()
         app_state.set_last_command("cardio2e/light/set/1 ON")
 
@@ -100,3 +100,16 @@ class TestAppStateDiagnostics:
         assert diag["errors_count"] == 1
         assert diag["last_command"] == "cardio2e/light/set/1 ON"
         assert diag["uptime_seconds"] >= 0
+
+    def test_reconnects_and_last_error(self, app_state):
+        app_state.increment_reconnects()
+        app_state.increment_reconnects()
+        app_state.set_last_error("some NACK")
+        diag = app_state.get_diagnostics()
+        assert diag["reconnects"] == 2
+        assert diag["last_error"] == "some NACK"
+
+    def test_seconds_since_last_message_none_until_first(self, app_state):
+        assert app_state.get_diagnostics()["seconds_since_last_message"] is None
+        app_state.record_message()
+        assert app_state.get_diagnostics()["seconds_since_last_message"] >= 0

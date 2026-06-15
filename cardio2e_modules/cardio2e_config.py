@@ -85,16 +85,29 @@ class AppState(object):
         # Diagnostics counters (atomic increments via lock)
         self._messages_processed = 0
         self._errors_count = 0
+        self._reconnects = 0
         self._last_command = ""
+        self._last_error = ""
         self._start_time = time.monotonic()
+        self._last_message_time = None
 
-    def increment_messages(self):
+    def record_message(self):
+        """Count an RS-232 message and stamp the time it was received."""
         with self._lock:
             self._messages_processed += 1
+            self._last_message_time = time.monotonic()
 
     def increment_errors(self):
         with self._lock:
             self._errors_count += 1
+
+    def set_last_error(self, error):
+        with self._lock:
+            self._last_error = error
+
+    def increment_reconnects(self):
+        with self._lock:
+            self._reconnects += 1
 
     def set_last_command(self, cmd):
         with self._lock:
@@ -102,12 +115,20 @@ class AppState(object):
 
     def get_diagnostics(self):
         with self._lock:
-            uptime_seconds = int(time.monotonic() - self._start_time)
+            now = time.monotonic()
+            uptime_seconds = int(now - self._start_time)
+            if self._last_message_time is None:
+                seconds_since_last_message = None
+            else:
+                seconds_since_last_message = int(now - self._last_message_time)
             return {
                 "uptime_seconds": uptime_seconds,
                 "messages_processed": self._messages_processed,
                 "errors_count": self._errors_count,
+                "reconnects": self._reconnects,
                 "last_command": self._last_command,
+                "last_error": self._last_error,
+                "seconds_since_last_message": seconds_since_last_message,
             }
 
     @property
