@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.2.1 - 2026-06-15
+
+### Fixes
+- Fail fast on undefined cover slots. Covers are probed blindly over `1..ncovers` (they are not in the login dump), so undefined slots stalled startup ~30s each on the name query. Cover name fetches now use a 2s/2-retry budget, and a slot with no name is skipped entirely (no state query, no autodiscovery).
+
+### Other
+- Add `requirements.txt` for the runtime dependencies (`pyserial`, `paho-mqtt`).
+
 ## v2.2.0 - 2026-06-15
 
 ### Features
