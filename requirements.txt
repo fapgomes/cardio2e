@@ -1,0 +1,4 @@
+# Runtime dependencies. Prefer system packages where available
+# (e.g. Debian/Ubuntu: python3-serial python3-paho-mqtt).
+pyserial>=3.4
+paho-mqtt>=1.6

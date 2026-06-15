@@ -51,6 +51,12 @@ Install the system packages (Debian/Ubuntu example):
 sudo apt-get install python3-serial python3-paho-mqtt
 ```
 
+Or via pip:
+
+```
+pip install -r requirements.txt
+```
+
 ## Installation
 
 Clone the repo into `/opt`:

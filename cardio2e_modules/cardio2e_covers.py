@@ -14,16 +14,19 @@ def initialize_entity_cover(serial_conn, mqtt_client, get_name_fn, get_entity_st
     """
     _LOGGER.info("Initializing entity state from type cover...")
 
-    if fetch_names:
-        for entity_id in range(1, num_entities + 1):
-            get_name_fn(serial_conn, entity_id, "C", mqtt_client)
-    else:
+    if not fetch_names:
         _LOGGER.info("The flag for fetching cover names is deactivated; skipping name fetch.")
-
     if skip_init_state:
         _LOGGER.info("The flag for fetching cover state is deactivated; skipping state fetch.")
-    else:
-        for entity_id in range(1, num_entities + 1):
+
+    for entity_id in range(1, num_entities + 1):
+        if fetch_names:
+            name = get_name_fn(serial_conn, entity_id, "C", mqtt_client)
+            if name is None:
+                # No name response: this cover slot is not defined. Skip its
+                # state query too, so undefined covers cost almost nothing.
+                continue
+        if not skip_init_state:
             get_entity_state_fn(serial_conn, mqtt_client, entity_id, "C")
 
     _LOGGER.info("States of all entities of type cover have been initialized.")

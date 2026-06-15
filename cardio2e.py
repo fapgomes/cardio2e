@@ -31,7 +31,12 @@ def get_name(serial_conn, entity_id, entity_type, mqtt_client, config, app_state
         _LOGGER.info("Published autodiscovery config for security entity %s %d without fetching name.", entity_type, entity_id)
         return entity_name
 
-    entity_name = query_name(serial_conn, entity_id, entity_type)
+    if entity_type == "C":
+        # Covers are probed blindly over 1..ncovers; undefined ones never answer,
+        # so fail fast (real covers reply in well under a second).
+        entity_name = query_name(serial_conn, entity_id, entity_type, max_retries=2, timeout=2)
+    else:
+        entity_name = query_name(serial_conn, entity_id, entity_type)
     if not entity_name:
         _LOGGER.warning("Could not get entity name %s %d. Skipping.", entity_type, entity_id)
         return None
