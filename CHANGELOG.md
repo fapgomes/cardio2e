@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.3.3 - 2026-06-15
+
+### Fixes
+- Fix the root cause of the "'Event' object is not callable" error on shutdown: the serial reader stored its stop flag in `self._stop`, which shadowed `threading.Thread._stop()` — a method `join()` calls internally on Python ≤ 3.12. Renamed to `_stop_event`. (Not reproducible on Python 3.13+, which no longer calls it; the deployment runs 3.12.)
+
 ## v2.3.2 - 2026-06-15
 
 ### Fixes
