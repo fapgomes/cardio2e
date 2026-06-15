@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.3.0 - 2026-06-15
+
+### Features
+- Expose key diagnostics as dedicated Home Assistant entities (via autodiscovery, read from the existing diagnostics JSON): `sensor.cardio2e_seconds_since_last_message` (duration), `sensor.cardio2e_pending_queries`, `sensor.cardio2e_reconnects`, and `binary_sensor.cardio2e_reader` (running). The diagnostics sensor and its attributes are unchanged.
+
 ## v2.2.1 - 2026-06-15
 
 ### Fixes
