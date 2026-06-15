@@ -25,6 +25,39 @@ class TestSerialAccessors:
         assert cs.pending_count() == 0
 
 
+class TestDiagnosticAutodiscovery:
+    def _publish(self, mqtt):
+        cardio2e_listener._publish_diagnostics_autodiscovery(mqtt)
+
+    def test_seconds_since_last_message_sensor(self, mqtt):
+        self._publish(mqtt)
+        raw = mqtt.payload_for("homeassistant/sensor/cardio2e_seconds_since_last_message/config")
+        cfg = json.loads(raw)
+        assert cfg["device_class"] == "duration"
+        assert cfg["unit_of_measurement"] == "s"
+        assert "seconds_since_last_message" in cfg["value_template"]
+        assert cfg["state_topic"] == "cardio2e/diagnostics/state"
+
+    def test_pending_queries_sensor(self, mqtt):
+        self._publish(mqtt)
+        cfg = json.loads(mqtt.payload_for("homeassistant/sensor/cardio2e_pending_queries/config"))
+        assert "pending_queries" in cfg["value_template"]
+        assert cfg["state_class"] == "measurement"
+
+    def test_reconnects_sensor(self, mqtt):
+        self._publish(mqtt)
+        cfg = json.loads(mqtt.payload_for("homeassistant/sensor/cardio2e_reconnects/config"))
+        assert "reconnects" in cfg["value_template"]
+        assert cfg["state_class"] == "total_increasing"
+
+    def test_reader_binary_sensor(self, mqtt):
+        self._publish(mqtt)
+        cfg = json.loads(mqtt.payload_for("homeassistant/binary_sensor/cardio2e_reader/config"))
+        assert cfg["device_class"] == "running"
+        assert cfg["payload_on"] == "ON"
+        assert "reader_active" in cfg["value_template"]
+
+
 class TestHeartbeatPayload:
     def test_includes_reader_and_diagnostic_fields(self, mqtt, app_state):
         cardio2e_listener._publish_heartbeat(mqtt, app_state)

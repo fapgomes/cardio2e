@@ -17,7 +17,7 @@ to MQTT, and forwards commands received from MQTT back to the controller.
 | Security (`S`) | `alarm_control_panel` (arm away / disarm) |
 | Zones (`Z`/`B`) | `binary_sensor` + bypass `switch` |
 | Scenarios/macros (`M`) | `scene` |
-| Diagnostics & errors | `sensor` (uptime, message/error/reconnect counters, last command, last error, time since last message, reader status, pending queries) |
+| Diagnostics & errors | `sensor` with attributes (uptime, message/error/reconnect counters, last command, last error, time since last message, reader status, pending queries); key fields are also exposed as dedicated diagnostic entities (`seconds_since_last_message`, `pending_queries`, `reconnects` sensors + a `reader` binary_sensor) |
 
 All entities are created automatically in Home Assistant through MQTT
 autodiscovery — no manual YAML is required.

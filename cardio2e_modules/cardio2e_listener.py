@@ -89,8 +89,29 @@ def _publish_heartbeat(mqtt_client, app_state):
     _LOGGER.debug("Heartbeat published: %s", timestamp)
 
 
+def _diagnostic_entity_config(domain, object_id, name, value_template, extra):
+    """Build an autodiscovery config for a diagnostic entity that reads a field
+    from the shared diagnostics JSON."""
+    config_topic = f"homeassistant/{domain}/{object_id}/config"
+    payload = {
+        "name": name,
+        "unique_id": object_id,
+        "state_topic": "cardio2e/diagnostics/state",
+        "value_template": value_template,
+        "qos": 1,
+        "entity_category": "diagnostic",
+        "availability_topic": AVAILABILITY_TOPIC,
+        "payload_available": PAYLOAD_AVAILABLE,
+        "payload_not_available": PAYLOAD_NOT_AVAILABLE,
+        "device": DEVICE_INFO["errors"],
+    }
+    payload.update(extra)
+    return config_topic, payload
+
+
 def _publish_diagnostics_autodiscovery(mqtt_client):
-    """Publish autodiscovery config for the diagnostics sensor."""
+    """Publish autodiscovery config for the diagnostics sensor and the
+    individual diagnostic entities derived from the diagnostics JSON."""
     config_topic = "homeassistant/sensor/cardio2e_diagnostics/config"
     config_payload = {
         "name": "Cardio2e Diagnostics",
@@ -108,7 +129,36 @@ def _publish_diagnostics_autodiscovery(mqtt_client):
         "device": DEVICE_INFO["errors"],
     }
     mqtt_client.publish(config_topic, json.dumps(config_payload), retain=True)
-    _LOGGER.info("Published autodiscovery config for diagnostics sensor.")
+
+    # Individual diagnostic entities (read from the same diagnostics JSON)
+    entities = [
+        _diagnostic_entity_config(
+            "sensor", "cardio2e_seconds_since_last_message",
+            "Cardio2e Seconds Since Last Message",
+            "{{ value_json.seconds_since_last_message }}",
+            {"unit_of_measurement": "s", "device_class": "duration",
+             "state_class": "measurement", "icon": "mdi:timer-sand"},
+        ),
+        _diagnostic_entity_config(
+            "sensor", "cardio2e_pending_queries", "Cardio2e Pending Queries",
+            "{{ value_json.pending_queries }}",
+            {"state_class": "measurement", "icon": "mdi:tray-full"},
+        ),
+        _diagnostic_entity_config(
+            "sensor", "cardio2e_reconnects", "Cardio2e Reconnects",
+            "{{ value_json.reconnects }}",
+            {"state_class": "total_increasing", "icon": "mdi:restart"},
+        ),
+        _diagnostic_entity_config(
+            "binary_sensor", "cardio2e_reader", "Cardio2e Reader",
+            "{{ 'ON' if value_json.reader_active else 'OFF' }}",
+            {"payload_on": "ON", "payload_off": "OFF", "device_class": "running"},
+        ),
+    ]
+    for topic, payload in entities:
+        mqtt_client.publish(topic, json.dumps(payload), retain=True)
+
+    _LOGGER.info("Published autodiscovery config for diagnostics sensors.")
 
 
 def listen_for_updates(serial_conn, mqtt_client, config, app_state):
