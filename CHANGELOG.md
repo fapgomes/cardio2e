@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.3.1 - 2026-06-15
+
+### Fixes
+- Truly clean shutdown. The signal handler now only sets an event and does no serial/MQTT I/O (the previous version still did I/O from the signal context, which raced and produced "Bad file descriptor" and a spurious "'Event' object is not callable"). The reader thread is stopped and joined before the port is closed, and all teardown runs in the normal context; the reconnect backoff is interruptible by shutdown.
+
 ## v2.3.0 - 2026-06-15
 
 ### Features
