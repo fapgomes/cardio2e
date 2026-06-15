@@ -346,11 +346,14 @@ class SerialReader(threading.Thread):
         super().__init__(daemon=True, name="cardio2e-serial-reader")
         self._serial = serial_conn
         self._on_message = on_message
-        self._stop = threading.Event()
+        # NOTE: must NOT be named ``_stop`` — threading.Thread has an internal
+        # ``_stop()`` method (called by join() on Python <= 3.12), and shadowing
+        # it with an Event makes join() raise "'Event' object is not callable".
+        self._stop_event = threading.Event()
         self._buffer = ""
 
     def stop(self):
-        self._stop.set()
+        self._stop_event.set()
 
     def _process_buffer(self):
         while "\r" in self._buffer or "\n" in self._buffer:
@@ -372,7 +375,7 @@ class SerialReader(threading.Thread):
     def run(self):
         _reader_active.set()
         try:
-            while not self._stop.is_set():
+            while not self._stop_event.is_set():
                 if not self._serial.is_open:
                     break
                 try:
@@ -384,7 +387,7 @@ class SerialReader(threading.Thread):
                     self._buffer += raw
                     self._process_buffer()
                 except Exception as e:
-                    if self._stop.is_set() or not self._serial.is_open:
+                    if self._stop_event.is_set() or not self._serial.is_open:
                         # Expected during shutdown/reconnect: the port was closed
                         # under us. Not an error.
                         _LOGGER.info("Serial reader: port closed, stopping.")

@@ -100,6 +100,24 @@ class TestSerialReaderProcessing:
             cs._unregister(q)
 
 
+class TestReaderThreadInternals:
+    def test_does_not_shadow_thread_internal_stop(self):
+        # threading.Thread has an internal _stop() method (called by join() on
+        # Python <= 3.12). The reader must not shadow it with an instance attr,
+        # or join() raises "'Event' object is not callable".
+        reader = cs.SerialReader(FakeSerial(), on_message=lambda m, p: None)
+        assert "_stop" not in vars(reader)
+
+    def test_start_stop_join_is_clean(self):
+        # Exercises the join() path that triggered the shadowing bug.
+        reader = cs.SerialReader(FakeSerial(), on_message=lambda m, p: None)
+        reader.start()
+        time.sleep(0.05)
+        reader.stop()
+        reader.join(timeout=2)  # must not raise
+        assert not reader.is_alive()
+
+
 class TestReaderQueryIntegration:
     def test_reader_thread_serves_a_coordinated_query(self):
         # Response arrives shortly after the query is issued (as on real hardware),
