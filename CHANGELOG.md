@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.2.0 - 2026-06-15
+
+### Features
+- Richer diagnostics sensor: adds `reader_active` and `pending_queries` (serial reader health), `seconds_since_last_message` (detects a silent/stuck bus), a `reconnects` counter, and `last_error`. Existing topics/payloads are unchanged — these are added keys.
+
+### Docs
+- Rewrite the README (architecture, supported entities, full config reference, development/testing).
+
 ## v2.1.3 - 2026-06-14
 
 ### Fixes
