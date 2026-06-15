@@ -3,6 +3,7 @@
 import logging
 import os
 import signal
+import threading
 import time
 
 import serial
@@ -199,27 +200,21 @@ def main():
 
     serial_conn = None
     mqtt_client = None
-    shutdown_requested = [False]
+    shutdown_event = threading.Event()
 
     def handle_shutdown(signum, frame):
+        # Keep the signal handler minimal and I/O-free: doing serial/MQTT I/O
+        # from the signal context raced with the running threads. Just signal;
+        # listen_for_updates returns promptly and main() does the teardown.
         _LOGGER.info("Closing signal received. Shutting down...")
-        shutdown_requested[0] = True
-        if mqtt_client:
-            publish_not_available(mqtt_client)
-        if serial_conn and serial_conn.is_open:
-            logout(serial_conn)
-            # Closing the port unblocks listen_for_updates: its housekeeping loop
-            # exits, stops/joins the reader thread, and returns, letting main()
-            # exit cleanly. We deliberately do NOT call sys.exit() from the signal
-            # handler — doing so raced with daemon-thread/interpreter teardown.
-            serial_conn.close()
+        shutdown_event.set()
 
     signal.signal(signal.SIGTERM, handle_shutdown)
     signal.signal(signal.SIGINT, handle_shutdown)
 
     backoff = 1
 
-    while not shutdown_requested[0]:
+    while not shutdown_event.is_set():
         try:
             # Connect serial
             if serial_conn is None or not serial_conn.is_open:
@@ -248,11 +243,11 @@ def main():
             # Reset backoff on successful connection
             backoff = 1
 
-            # Run listener in current thread (blocks until serial disconnects)
-            listen_for_updates(serial_conn, mqtt_client, cfg, app_state)
+            # Run listener in current thread (returns on disconnect or shutdown)
+            listen_for_updates(serial_conn, mqtt_client, cfg, app_state, shutdown_event)
 
-            # If we get here, the serial connection closed
-            if shutdown_requested[0]:
+            # If we get here, the serial connection closed or shutdown was asked
+            if shutdown_event.is_set():
                 break
 
             _LOGGER.warning("Serial connection lost. Will reconnect...")
@@ -284,13 +279,23 @@ def main():
         # Count the reconnection for diagnostics
         app_state.increment_reconnects()
 
-        # Exponential backoff
-        time.sleep(backoff)
+        # Exponential backoff (interruptible by shutdown)
+        if shutdown_event.wait(backoff):
+            break
         backoff = min(backoff * 2, MAX_BACKOFF)
 
-    # Graceful exit: stop the MQTT client so no threads linger at teardown.
+    # Graceful teardown, run in the normal (non-signal) context so no serial or
+    # MQTT I/O happens from the signal handler. The reader was already stopped by
+    # listen_for_updates before we touch the port, so closing it is clean.
+    if serial_conn and serial_conn.is_open:
+        try:
+            logout(serial_conn)
+            serial_conn.close()
+        except Exception:
+            pass
     if mqtt_client:
         try:
+            publish_not_available(mqtt_client)
             mqtt_client.loop_stop()
             mqtt_client.disconnect()
         except Exception:

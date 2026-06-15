@@ -161,11 +161,11 @@ def _publish_diagnostics_autodiscovery(mqtt_client):
     _LOGGER.info("Published autodiscovery config for diagnostics sensors.")
 
 
-def listen_for_updates(serial_conn, mqtt_client, config, app_state):
+def listen_for_updates(serial_conn, mqtt_client, config, app_state, shutdown_event=None):
     """Run the housekeeping loop while a SerialReader thread owns the port.
 
-    Returns when the connection is lost (reader stopped), so the caller can
-    reconnect.
+    Returns when the connection is lost (reader stopped) or when
+    ``shutdown_event`` is set, so the caller can reconnect or shut down.
     """
     last_time_sent = time.monotonic()
     last_heartbeat = time.monotonic()
@@ -184,6 +184,8 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state):
 
     try:
         while serial_conn.is_open and reader.is_alive():
+            if shutdown_event is not None and shutdown_event.is_set():
+                break
             now = time.monotonic()
 
             # Send date periodically
@@ -205,7 +207,11 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state):
                 _sync_all_entities(serial_conn, mqtt_client, config, app_state)
                 last_sync = now
 
-            time.sleep(0.5)
+            if shutdown_event is not None:
+                if shutdown_event.wait(0.5):
+                    break
+            else:
+                time.sleep(0.5)
     finally:
         reader.stop()
         reader.join(timeout=2)
