@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.3.2 - 2026-06-15
+
+### Fixes
+- Exit cleanly if an error is raised during shutdown teardown (e.g. an MQTT-client hiccup) instead of logging an ERROR and "Reconnecting in 1s". Unexpected errors now log a full traceback to aid diagnosis.
+
 ## v2.3.1 - 2026-06-15
 
 ### Fixes
