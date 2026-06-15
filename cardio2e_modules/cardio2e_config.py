@@ -89,7 +89,10 @@ class AppState(object):
         self._last_command = ""
         self._last_error = ""
         self._start_time = time.monotonic()
-        self._last_message_time = None
+        # Seed with start time so the metric is always a number (never None /
+        # "unknown" in HA); it reads as "time since startup" until the first
+        # message arrives, then reflects real bus activity.
+        self._last_message_time = self._start_time
 
     def record_message(self):
         """Count an RS-232 message and stamp the time it was received."""
@@ -117,10 +120,7 @@ class AppState(object):
         with self._lock:
             now = time.monotonic()
             uptime_seconds = int(now - self._start_time)
-            if self._last_message_time is None:
-                seconds_since_last_message = None
-            else:
-                seconds_since_last_message = int(now - self._last_message_time)
+            seconds_since_last_message = int(now - self._last_message_time)
             return {
                 "uptime_seconds": uptime_seconds,
                 "messages_processed": self._messages_processed,

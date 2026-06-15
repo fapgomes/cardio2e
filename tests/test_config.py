@@ -109,7 +109,8 @@ class TestAppStateDiagnostics:
         assert diag["reconnects"] == 2
         assert diag["last_error"] == "some NACK"
 
-    def test_seconds_since_last_message_none_until_first(self, app_state):
-        assert app_state.get_diagnostics()["seconds_since_last_message"] is None
+    def test_seconds_since_last_message_is_always_numeric(self, app_state):
+        # Seeded at startup so it is never None (avoids "unknown" in HA)
+        assert app_state.get_diagnostics()["seconds_since_last_message"] >= 0
         app_state.record_message()
         assert app_state.get_diagnostics()["seconds_since_last_message"] >= 0
