@@ -254,9 +254,16 @@ def main():
             publish_not_available(mqtt_client)
 
         except serial.SerialException as e:
+            if shutdown_event.is_set():
+                break
             _LOGGER.error("Serial error: %s. Reconnecting in %ds...", e, backoff)
         except Exception as e:
-            _LOGGER.error("Unexpected error: %s. Reconnecting in %ds...", e, backoff)
+            if shutdown_event.is_set():
+                # A hiccup while tearing down during shutdown — not fatal, just
+                # log it (with traceback) and exit cleanly instead of "reconnecting".
+                _LOGGER.warning("Ignoring error during shutdown: %s", e, exc_info=True)
+                break
+            _LOGGER.error("Unexpected error: %s. Reconnecting in %ds...", e, backoff, exc_info=True)
 
         # Clean up before retry
         if serial_conn and serial_conn.is_open:
