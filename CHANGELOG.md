@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.3.4 - 2026-06-15
+
+### Fixes
+- `seconds_since_last_message` no longer shows as "unknown" in Home Assistant before the first message: the timestamp is seeded at startup so the sensor is always numeric.
+
 ## v2.3.3 - 2026-06-15
 
 ### Fixes
