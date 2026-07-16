@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.3.5 - 2026-07-16
+
+### Fixes
+- Re-query light/switch state when the `@I` broadcast doesn't follow an `@A` ack. When the controller's `@I <type> <id> <value>` is lost or corrupted on the RS-232 line (seen in production as `@I L 130`), the published state stayed stale until the next periodic sync, hours later. After an `@A L/R` ack, if no matching `@I` arrives within 2s the state is re-queried with `@G` and republished. Covers are excluded because `@G C` makes the controller re-drive the motor.
+
 ## v2.3.4 - 2026-06-15
 
 ### Fixes
