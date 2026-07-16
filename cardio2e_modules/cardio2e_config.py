@@ -82,6 +82,7 @@ class AppState(object):
         self._bypass_states = ""
         self._entity_names = {}  # {(entity_type, entity_id): name}
         self._entity_states = {}  # {(entity_type, entity_id): last_known_state}
+        self._entity_update_times = {}  # {(entity_type, entity_id): monotonic time of last @I}
         # Diagnostics counters (atomic increments via lock)
         self._messages_processed = 0
         self._errors_count = 0
@@ -180,6 +181,16 @@ class AppState(object):
         """Return the cached state for an entity, or None if not cached."""
         with self._lock:
             return self._entity_states.get((entity_type, int(entity_id)))
+
+    def record_entity_update(self, entity_type, entity_id):
+        """Stamp the time an @I state update was processed for an entity."""
+        with self._lock:
+            self._entity_update_times[(entity_type, int(entity_id))] = time.monotonic()
+
+    def last_entity_update(self, entity_type, entity_id):
+        """Return the monotonic time of the last @I update, or None."""
+        with self._lock:
+            return self._entity_update_times.get((entity_type, int(entity_id)))
 
     @property
     def lock(self):

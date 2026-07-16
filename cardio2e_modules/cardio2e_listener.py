@@ -3,6 +3,7 @@
 import datetime
 import json
 import logging
+import threading
 import time
 
 from .cardio2e_serial import send_date, query_state, SerialReader, reader_active, pending_count
@@ -28,7 +29,41 @@ from .cardio2e_constants import (
 
 HEARTBEAT_INTERVAL = 30  # seconds
 
+# Grace period for the @I state broadcast that normally follows an @A ack.
+# If it doesn't arrive (lost/corrupted on the wire), the state is re-queried.
+ACK_FOLLOWUP_DELAY = 2.0  # seconds
+
 _LOGGER = logging.getLogger(__name__)
+
+
+def _schedule_ack_verification(serial_conn, mqtt_client, config, app_state, entity_type, entity_id):
+    """Re-query an entity's state if no @I update follows its @A ack.
+
+    The controller acknowledges an action with ``@A <type> <id>`` and then
+    broadcasts the new state as ``@I <type> <id> <value>``. When that @I is
+    lost or corrupted on the RS-232 line, the published state goes stale until
+    the next periodic sync (hours). Only lights (L) and relays (R) are
+    verified: ``@G C`` makes the controller re-drive the cover motor, so
+    covers must never be re-queried.
+    """
+    ack_time = time.monotonic()
+
+    def _verify():
+        time.sleep(ACK_FOLLOWUP_DELAY)
+        last_update = app_state.last_entity_update(entity_type, entity_id)
+        if last_update is not None and last_update >= ack_time:
+            return
+        _LOGGER.warning(
+            "No @I update within %.1fs of @A %s %d ack; re-querying state.",
+            ACK_FOLLOWUP_DELAY, entity_type, entity_id,
+        )
+        state = _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, app_state)
+        _LOGGER.info("Re-queried state for %s %d: %s", entity_type, entity_id, state)
+
+    threading.Thread(
+        target=_verify, daemon=True,
+        name="cardio2e-ack-verify-%s%d" % (entity_type, entity_id),
+    ).start()
 
 
 def _sync_all_entities(serial_conn, mqtt_client, config, app_state):
@@ -233,8 +268,10 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
 
         if entity_type == "L":
             _LOGGER.info("OK for action %s", app_state.get_entity_label("light", "L", entity_id))
+            _schedule_ack_verification(serial_conn, mqtt_client, config, app_state, "L", entity_id)
         elif entity_type == "R":
             _LOGGER.info("OK for action %s", app_state.get_entity_label("switch", "R", entity_id))
+            _schedule_ack_verification(serial_conn, mqtt_client, config, app_state, "R", entity_id)
         elif entity_type == "C":
             _LOGGER.info("OK for action %s", app_state.get_entity_label("cover", "C", entity_id))
         elif entity_type == "S":
@@ -260,8 +297,10 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
         entity_type = message_parts[1]
 
         if entity_type == "L":
+            app_state.record_entity_update("L", int(message_parts[2]))
             cardio2e_lights.process_update(mqtt_client, message_parts, config, app_state)
         elif entity_type == "R":
+            app_state.record_entity_update("R", int(message_parts[2]))
             cardio2e_switches.process_update(mqtt_client, message_parts, app_state)
         elif entity_type == "C":
             cardio2e_covers.process_update(mqtt_client, message_parts, app_state)
