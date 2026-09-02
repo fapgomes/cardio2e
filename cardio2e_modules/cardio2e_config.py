@@ -80,6 +80,7 @@ class AppState(object):
         self._lock = threading.RLock()
         self._hvac_states = {}
         self._bypass_states = ""
+        self._known_entities = set()  # {(entity_type, entity_id)} seen on the bus
         self._entity_names = {}  # {(entity_type, entity_id): name}
         self._entity_states = {}  # {(entity_type, entity_id): last_known_state}
         self._entity_update_times = {}  # {(entity_type, entity_id): monotonic time of last @I}
@@ -152,9 +153,16 @@ class AppState(object):
         with self._lock:
             self._bypass_states = value
 
-    def set_entity_name(self, entity_type, entity_id, name):
-        """Store the friendly name of an entity."""
+    def register_entity(self, entity_type, entity_id):
+        """Mark an entity as known (present on the bus), independently of
+        whether its name was fetched. Known ids drive the periodic sync."""
         with self._lock:
+            self._known_entities.add((entity_type, int(entity_id)))
+
+    def set_entity_name(self, entity_type, entity_id, name):
+        """Store the friendly name of an entity (and mark it as known)."""
+        with self._lock:
+            self._known_entities.add((entity_type, int(entity_id)))
             self._entity_names[(entity_type, int(entity_id))] = name
 
     def get_entity_label(self, prefix, entity_type, entity_id):
@@ -169,12 +177,13 @@ class AppState(object):
         """Return sorted list of known entity IDs for a given type."""
         with self._lock:
             return sorted(
-                eid for etype, eid in self._entity_names if etype == entity_type
+                eid for etype, eid in self._known_entities if etype == entity_type
             )
 
     def set_entity_state(self, entity_type, entity_id, state):
-        """Cache the last known state of an entity."""
+        """Cache the last known state of an entity (and mark it as known)."""
         with self._lock:
+            self._known_entities.add((entity_type, int(entity_id)))
             self._entity_states[(entity_type, int(entity_id))] = state
 
     def get_entity_state(self, entity_type, entity_id):

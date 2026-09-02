@@ -49,3 +49,11 @@ class TestSyslog:
             assert handler.ident == "cardio2e: "
         finally:
             handler.close()
+
+
+class TestParseLoginResponse:
+    def test_force_included_light_is_registered(self, mqtt, serial_conn, app_state):
+        cfg = AppConfig(force_include_lights=[46], fetch_light_names=False)
+        cardio2e.parse_login_response("@I L 1 0\r", mqtt, serial_conn, cfg, app_state)
+        assert app_state.get_known_entity_ids("L") == [1, 46]
+        assert mqtt.payload_for("cardio2e/light/state/46") == "OFF"

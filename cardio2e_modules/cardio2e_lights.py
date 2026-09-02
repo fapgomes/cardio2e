@@ -51,12 +51,13 @@ def process_update(mqtt_client, message_parts, config, app_state):
         _LOGGER.info("%s brightness updated to: %d", label, state)
 
 
-def process_login(mqtt_client, message, serial_conn, config, get_name_fn):
+def process_login(mqtt_client, message, serial_conn, config, app_state, get_name_fn):
     """Process @I L messages from the login response."""
     import re
     match = re.match(r"@I L (\d+) (\d+)", message)
     if match:
         light_id, light_state = match.groups()
+        app_state.register_entity("L", light_id)
         light_state_topic = f"cardio2e/light/state/{light_id}"
         light_state_value = "ON" if int(light_state) > 0 else "OFF"
         mqtt_client.publish(light_state_topic, light_state_value, retain=True)

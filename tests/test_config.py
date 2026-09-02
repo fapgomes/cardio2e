@@ -79,10 +79,23 @@ class TestAppStateKnownIds:
         assert app_state.get_known_entity_ids("C") == []
 
 
+    def test_register_entity_without_name(self, app_state):
+        app_state.register_entity("L", 5)
+        app_state.register_entity("L", "2")
+        assert app_state.get_known_entity_ids("L") == [2, 5]
+        # No name: label falls back to the plain id
+        assert app_state.get_entity_label("light", "L", 5) == "light 5"
+
+
 class TestAppStateEntityState:
     def test_set_and_get(self, app_state):
         app_state.set_entity_state("C", 4, "75")
         assert app_state.get_entity_state("C", 4) == "75"
+
+    def test_set_state_registers_entity(self, app_state):
+        # Covers with name fetching disabled are only known through their state.
+        app_state.set_entity_state("C", 4, "75")
+        assert app_state.get_known_entity_ids("C") == [4]
 
     def test_missing_returns_none(self, app_state):
         assert app_state.get_entity_state("C", 99) is None

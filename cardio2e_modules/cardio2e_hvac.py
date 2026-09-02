@@ -157,6 +157,7 @@ def process_login(mqtt_client, message, serial_conn, config, app_state, get_name
     match = re.match(r"@I H (\d+) (\d+\.?\d*) (\d+\.?\d*) ([SR]) ([AHCOEN])", message)
     if match:
         hvac_id, heating_setpoint, cooling_setpoint, fan_state, system_mode = match.groups()
+        app_state.register_entity("H", hvac_id)
         fan_state_value = FAN_CODE_TO_STATE.get(fan_state, "off")
         hvac_state = HVAC_CODE_TO_MODE.get(system_mode, "Unknown")
 

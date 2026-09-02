@@ -43,11 +43,12 @@ def process_update(mqtt_client, message_parts, app_state):
     _LOGGER.info("%s state updated to: %s", label, switch_state)
 
 
-def process_login(mqtt_client, message, serial_conn, config, get_name_fn):
+def process_login(mqtt_client, message, serial_conn, config, app_state, get_name_fn):
     """Process @I R messages from the login response."""
     match = re.match(r"@I R (\d+) ([OC])", message)
     if match:
         switch_id, switch_state = match.groups()
+        app_state.register_entity("R", switch_id)
         switch_state_topic = f"cardio2e/switch/state/{switch_id}"
         switch_state_value = SWITCH_CODE_TO_STATE.get(switch_state, "OFF")
         mqtt_client.publish(switch_state_topic, switch_state_value, retain=True)

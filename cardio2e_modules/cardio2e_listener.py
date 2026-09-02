@@ -91,9 +91,10 @@ def _sync_all_entities(serial_conn, mqtt_client, config, app_state):
     _get_entity_state(serial_conn, mqtt_client, 1, "S", config, app_state)
     count += 1
 
-    # L, R, H, T: iterate known IDs and query via RS-232
-    for entity_type in ("L", "R", "H", "T"):
-        entity_ids = app_state.get_known_entity_ids(entity_type)
+    # L, R, H, T: iterate known IDs and query via RS-232. Temperature (T)
+    # readings have no ids of their own: they belong to the HVAC (H) entities.
+    for entity_type, id_source in (("L", "L"), ("R", "R"), ("H", "H"), ("T", "H")):
+        entity_ids = app_state.get_known_entity_ids(id_source)
         for entity_id in entity_ids:
             _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, app_state)
             count += 1

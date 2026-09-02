@@ -103,10 +103,10 @@ def parse_login_response(response, mqtt_client, serial_conn, config, app_state):
                     mqtt_client.publish("cardio2e/version/serial", version_info[i + 1], retain=True)
 
         elif message.startswith("@I L"):
-            cardio2e_lights.process_login(mqtt_client, message, serial_conn, config, _get_name_fn)
+            cardio2e_lights.process_login(mqtt_client, message, serial_conn, config, app_state, _get_name_fn)
 
         elif message.startswith("@I R"):
-            cardio2e_switches.process_login(mqtt_client, message, serial_conn, config, _get_name_fn)
+            cardio2e_switches.process_login(mqtt_client, message, serial_conn, config, app_state, _get_name_fn)
 
         elif message.startswith("@I H"):
             cardio2e_hvac.process_login(mqtt_client, message, serial_conn, config, app_state, _get_name_fn)
@@ -126,6 +126,7 @@ def parse_login_response(response, mqtt_client, serial_conn, config, app_state):
     # Force inclusion of lights
     for light_id in config.force_include_lights:
         _LOGGER.info("Forcing initialization of light %s (not found in login response)", light_id)
+        app_state.register_entity("L", light_id)
         mqtt_client.publish(f"cardio2e/light/state/{light_id}", "OFF", retain=True)
         if config.fetch_light_names:
             _get_name_fn(serial_conn, light_id, "L", mqtt_client)

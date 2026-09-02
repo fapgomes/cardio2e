@@ -9,6 +9,8 @@
 - The periodic sync republishes the brightness of dimmer lights, as spontaneous `@I L` updates already did.
 - `handle_bypass_command` no longer holds the `AppState` lock while writing to the serial port (throttled, up to 150ms) and publishing to MQTT, so the reader thread is not blocked behind that I/O.
 - `ha_discover_prefix` is now honoured by all autodiscovery topics (entities, error sensor and diagnostic entities). It was read from the config but every topic hard-coded `homeassistant/`. The default is unchanged.
+- The periodic sync no longer depends on name fetching. Known entity ids were derived from the fetched names, so with `fetch_*_names = false` the sync skipped every light, relay, HVAC and cover. Entities are now registered when they appear in the login dump (or, for covers, when their state is read), independently of names.
+- Temperatures are now included in the periodic sync. The sync iterated ids of type `T`, which never exist (names are stored under `H`); it now queries `@G T` for each known HVAC id.
 
 ### Other
 - Add `tests/test_main.py` covering the entry-point module (login failure handling, syslog setup).

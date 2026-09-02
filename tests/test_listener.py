@@ -92,3 +92,19 @@ class TestGetEntityStateLight:
         serial_conn.feed(b"@I L 5 40\r")
         cardio2e_listener._get_entity_state(serial_conn, mqtt, 5, "L", AppConfig(), app_state)
         assert "cardio2e/light/brightness/5" not in mqtt.topics()
+
+
+class TestSyncAllEntities:
+    def test_temperature_synced_for_each_known_hvac(self, mqtt, serial_conn, app_state, monkeypatch):
+        # @I T (temperature) has no names of its own: the ids to query are the
+        # HVAC (H) ids. Before, the sync iterated "T" ids, which never exist.
+        app_state.register_entity("H", 1)
+        app_state.register_entity("H", 3)
+        queried = []
+        monkeypatch.setattr(
+            cardio2e_listener, "_get_entity_state",
+            lambda s, m, eid, etype, cfg, st: queried.append((etype, eid)),
+        )
+        cardio2e_listener._sync_all_entities(serial_conn, mqtt, AppConfig(), app_state)
+        assert [eid for etype, eid in queried if etype == "T"] == [1, 3]
+        assert [eid for etype, eid in queried if etype == "H"] == [1, 3]

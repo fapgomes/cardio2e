@@ -10,18 +10,25 @@ def _names_recorder():
 
 
 class TestLights:
-    def test_process_login_publishes_state_and_fetches_name(self, mqtt, serial_conn):
+    def test_process_login_publishes_state_and_fetches_name(self, mqtt, serial_conn, app_state):
         cfg = AppConfig(fetch_light_names=True)
         calls, fn = _names_recorder()
-        cardio2e_lights.process_login(mqtt, "@I L 5 100", serial_conn, cfg, fn)
+        cardio2e_lights.process_login(mqtt, "@I L 5 100", serial_conn, cfg, app_state, fn)
         assert mqtt.payload_for("cardio2e/light/state/5") == "ON"
         assert calls and calls[0][1] == 5
 
-    def test_process_login_off(self, mqtt, serial_conn):
+    def test_process_login_off(self, mqtt, serial_conn, app_state):
         cfg = AppConfig(fetch_light_names=False)
         _, fn = _names_recorder()
-        cardio2e_lights.process_login(mqtt, "@I L 7 0", serial_conn, cfg, fn)
+        cardio2e_lights.process_login(mqtt, "@I L 7 0", serial_conn, cfg, app_state, fn)
         assert mqtt.payload_for("cardio2e/light/state/7") == "OFF"
+
+    def test_process_login_registers_id_without_name_fetch(self, mqtt, serial_conn, app_state):
+        # The periodic sync iterates known ids; they must be known even when
+        # name fetching is disabled (names are not the source of truth).
+        cfg = AppConfig(fetch_light_names=False)
+        cardio2e_lights.process_login(mqtt, "@I L 7 0", serial_conn, cfg, app_state, lambda *a: None)
+        assert app_state.get_known_entity_ids("L") == [7]
 
     def test_process_update_dimmer_publishes_brightness(self, mqtt, app_state):
         cfg = AppConfig(dimmer_lights=[5])
@@ -49,10 +56,10 @@ class TestLights:
 
 
 class TestSwitches:
-    def test_process_login(self, mqtt, serial_conn):
+    def test_process_login(self, mqtt, serial_conn, app_state):
         cfg = AppConfig(fetch_switch_names=False)
         _, fn = _names_recorder()
-        cardio2e_switches.process_login(mqtt, "@I R 3 O", serial_conn, cfg, fn)
+        cardio2e_switches.process_login(mqtt, "@I R 3 O", serial_conn, cfg, app_state, fn)
         assert mqtt.payload_for("cardio2e/switch/state/3") == "ON"
 
     def test_handle_set_on(self, serial_conn):
@@ -62,6 +69,12 @@ class TestSwitches:
     def test_handle_set_off(self, serial_conn):
         cardio2e_switches.handle_set_command(serial_conn, "cardio2e/switch/set/3", "OFF")
         assert serial_conn.last_written_str() == "@S R 3 C\r"
+
+
+    def test_process_login_registers_id_without_name_fetch(self, mqtt, serial_conn, app_state):
+        cfg = AppConfig(fetch_switch_names=False)
+        cardio2e_switches.process_login(mqtt, "@I R 3 O", serial_conn, cfg, app_state, lambda *a: None)
+        assert app_state.get_known_entity_ids("R") == [3]
 
 
 class TestSecurity:

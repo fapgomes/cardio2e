@@ -20,6 +20,11 @@ class TestProcessTempUpdate:
 
 
 class TestProcessLogin:
+    def test_registers_id_without_name_fetch(self, mqtt, serial_conn, app_state):
+        cfg = AppConfig(fetch_names_hvac=False)
+        cardio2e_hvac.process_login(mqtt, "@I H 2 18.0 20.0 S H", serial_conn, cfg, app_state, lambda *a: None)
+        assert app_state.get_known_entity_ids("H") == [2]
+
     def test_initializes_and_publishes(self, mqtt, serial_conn, app_state):
         cfg = AppConfig(fetch_names_hvac=False)
         cardio2e_hvac.process_login(mqtt, "@I H 2 18.0 20.0 S H", serial_conn, cfg, app_state, lambda *a: None)
