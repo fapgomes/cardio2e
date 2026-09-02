@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v2.4.0 - 2026-09-02
 
 ### Fixes
 - A corrupted RS-232 line (e.g. `@A L 1x`, non-numeric id) no longer kills the serial reader. The handler exception is logged with a traceback and the next line is processed, instead of stopping the reader and forcing a full reconnect and re-login.
