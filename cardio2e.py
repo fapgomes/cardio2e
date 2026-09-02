@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import logging
+import logging.handlers
 import os
 import signal
 import threading
@@ -19,6 +20,18 @@ from cardio2e_modules import cardio2e_errors, cardio2e_covers, cardio2e_lights, 
 VERSION = "2.3.5"
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class LoginFailed(RuntimeError):
+    """Raised when the controller does not accept the login."""
+
+
+def _setup_syslog(address, port):
+    """Return a UDP syslog handler (facility user, ident 'cardio2e')."""
+    handler = logging.handlers.SysLogHandler(address=(address, port))
+    handler.ident = "cardio2e: "
+    handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
+    return handler
 
 
 def get_name(serial_conn, entity_id, entity_type, mqtt_client, config, app_state):
@@ -144,20 +157,20 @@ def _do_login_and_init(serial_conn, mqtt_client, cfg, app_state):
     def _get_entity_state_fn(s_conn, m_client, eid, etype):
         return get_entity_state(s_conn, m_client, eid, etype, cfg, app_state)
 
-    cardio2e_errors.initialize_error_payload(mqtt_client)
+    cardio2e_errors.initialize_error_payload(mqtt_client, cfg.ha_discover_prefix)
 
     response = login(serial_conn, cfg.password)
-    if response:
-        parse_login_response(response, mqtt_client, serial_conn, cfg, app_state)
-        cardio2e_covers.initialize_entity_cover(
-            serial_conn, mqtt_client,
-            _get_name_fn, _get_entity_state_fn,
-            cfg.ncovers, cfg.fetch_cover_names, cfg.skip_init_cover_state,
-        )
-        get_name(serial_conn, 1, "S", mqtt_client, cfg, app_state)
-        cardio2e_scenarios.initialize_scenarios(serial_conn, mqtt_client, cfg, app_state)
-        return True
-    return False
+    if not response:
+        raise LoginFailed("cardio2e did not accept the login")
+
+    parse_login_response(response, mqtt_client, serial_conn, cfg, app_state)
+    cardio2e_covers.initialize_entity_cover(
+        serial_conn, mqtt_client,
+        _get_name_fn, _get_entity_state_fn,
+        cfg.ncovers, cfg.fetch_cover_names, cfg.skip_init_cover_state,
+    )
+    get_name(serial_conn, 1, "S", mqtt_client, cfg, app_state)
+    cardio2e_scenarios.initialize_scenarios(serial_conn, mqtt_client, cfg, app_state)
 
 
 def main():
@@ -176,24 +189,7 @@ def main():
 
     # Setup remote syslog if configured
     if cfg.syslog_address:
-        import socket
-
-        class UDPSyslogHandler(logging.Handler):
-            def __init__(self, address, port):
-                super().__init__()
-                self._address = (address, port)
-                self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-            def emit(self, record):
-                try:
-                    msg = "<14>cardio2e: %s" % self.format(record)
-                    self._sock.sendto(msg.encode(), self._address)
-                except Exception:
-                    self.handleError(record)
-
-        syslog_handler = UDPSyslogHandler(cfg.syslog_address, cfg.syslog_port)
-        syslog_handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
-        logging.getLogger().addHandler(syslog_handler)
+        logging.getLogger().addHandler(_setup_syslog(cfg.syslog_address, cfg.syslog_port))
         _LOGGER.info("Syslog enabled: %s:%d", cfg.syslog_address, cfg.syslog_port)
 
     _LOGGER.info("Cardio2e version v%s starting...", VERSION)
@@ -253,6 +249,10 @@ def main():
             _LOGGER.warning("Serial connection lost. Will reconnect...")
             publish_not_available(mqtt_client)
 
+        except LoginFailed as e:
+            if shutdown_event.is_set():
+                break
+            _LOGGER.error("%s. Retrying in %ds...", e, backoff)
         except serial.SerialException as e:
             if shutdown_event.is_set():
                 break

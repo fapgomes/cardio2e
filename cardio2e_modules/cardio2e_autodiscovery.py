@@ -22,9 +22,9 @@ def _availability_block():
     }
 
 
-def _light_config(entity_id, entity_name, config):
+def _light_config(entity_id, entity_name, config, prefix):
     """Build autodiscovery payload for a light."""
-    config_topic = f"homeassistant/light/cardio2e_{entity_id}/config"
+    config_topic = f"{prefix}/light/cardio2e_{entity_id}/config"
     state_topic = f"cardio2e/light/state/{entity_id}"
     command_topic = f"cardio2e/light/set/{entity_id}"
 
@@ -54,9 +54,9 @@ def _light_config(entity_id, entity_name, config):
     return config_topic, config_payload
 
 
-def _switch_config(entity_id, entity_name):
+def _switch_config(entity_id, entity_name, prefix):
     """Build autodiscovery payload for a switch."""
-    config_topic = f"homeassistant/switch/cardio2e_switch_{entity_id}/config"
+    config_topic = f"{prefix}/switch/cardio2e_switch_{entity_id}/config"
     command_topic = f"cardio2e/switch/set/{entity_id}"
     state_topic = f"cardio2e/switch/state/{entity_id}"
 
@@ -76,9 +76,9 @@ def _switch_config(entity_id, entity_name):
     return config_topic, config_payload
 
 
-def _cover_config(entity_id, entity_name):
+def _cover_config(entity_id, entity_name, prefix):
     """Build autodiscovery payload for a cover."""
-    config_topic = f"homeassistant/cover/cardio2e_cover_{entity_id}/config"
+    config_topic = f"{prefix}/cover/cardio2e_cover_{entity_id}/config"
     position_topic = f"cardio2e/cover/state/{entity_id}"
     set_position_topic = f"cardio2e/cover/set/{entity_id}"
     command_topic = f"cardio2e/cover/command/{entity_id}"
@@ -104,12 +104,12 @@ def _cover_config(entity_id, entity_name):
     return config_topic, config_payload
 
 
-def _hvac_config(entity_id, entity_name):
+def _hvac_config(entity_id, entity_name, prefix):
     """Build autodiscovery payload for an HVAC entity (climate)."""
     state_topic_base = f"cardio2e/hvac/{entity_id}/state"
     command_topic_base = f"cardio2e/hvac/{entity_id}/set"
 
-    config_topic = f"homeassistant/climate/cardio2e_hvac_{entity_id}/config"
+    config_topic = f"{prefix}/climate/cardio2e_hvac_{entity_id}/config"
     config_payload = {
         "name": entity_name,
         "unique_id": f"cardio2e_hvac_{entity_id}",
@@ -134,9 +134,9 @@ def _hvac_config(entity_id, entity_name):
     return config_topic, config_payload
 
 
-def _alarm_config(entity_id, entity_name):
+def _alarm_config(entity_id, entity_name, prefix):
     """Build autodiscovery payload for the alarm control panel."""
-    config_topic = f"homeassistant/alarm_control_panel/cardio2e_alarm_{entity_id}/config"
+    config_topic = f"{prefix}/alarm_control_panel/cardio2e_alarm_{entity_id}/config"
     command_topic = f"cardio2e/alarm/set/{entity_id}"
     state_topic = f"cardio2e/alarm/state/{entity_id}"
 
@@ -159,10 +159,10 @@ def _alarm_config(entity_id, entity_name):
     return config_topic, config_payload
 
 
-def _zone_config(entity_id, entity_name):
+def _zone_config(entity_id, entity_name, prefix):
     """Build autodiscovery payloads for a zone (binary sensor + bypass switch)."""
     # Binary sensor for zone state
-    sensor_config_topic = f"homeassistant/binary_sensor/cardio2e_zone_{entity_id}/config"
+    sensor_config_topic = f"{prefix}/binary_sensor/cardio2e_zone_{entity_id}/config"
     sensor_state_topic = f"cardio2e/zone/state/{entity_id}"
 
     sensor_config_payload = {
@@ -179,7 +179,7 @@ def _zone_config(entity_id, entity_name):
     }
 
     # Switch for bypass control
-    switch_config_topic = f"homeassistant/switch/cardio2e_zone_{entity_id}_bypass/config"
+    switch_config_topic = f"{prefix}/switch/cardio2e_zone_{entity_id}_bypass/config"
     bypass_state_topic = f"cardio2e/zone/bypass/state/{entity_id}"
     bypass_command_topic = f"cardio2e/zone/bypass/set/{entity_id}"
 
@@ -199,9 +199,9 @@ def _zone_config(entity_id, entity_name):
     return sensor_config_topic, sensor_config_payload, switch_config_topic, switch_config_payload
 
 
-def _scene_config(entity_id, entity_name):
+def _scene_config(entity_id, entity_name, prefix):
     """Build autodiscovery payload for a scene (scenario)."""
-    config_topic = f"homeassistant/scene/cardio2e_scene_{entity_id}/config"
+    config_topic = f"{prefix}/scene/cardio2e_scene_{entity_id}/config"
     command_topic = f"cardio2e/scene/set/{entity_id}"
 
     config_payload = {
@@ -226,43 +226,44 @@ def publish_config(mqtt_client, entity_id, entity_name, entity_type, config=None
     :param entity_id: Entity ID.
     :param entity_name: Entity name.
     :param entity_type: Entity type code (L, R, C, H, S, Z).
-    :param config: AppConfig instance (needed for light dimmer info).
+    :param config: AppConfig instance (dimmer info and discovery prefix).
     """
     _LOGGER.debug("Publishing autodiscovery info for %s", entity_name)
+    prefix = config.ha_discover_prefix if config is not None else "homeassistant"
 
     if entity_type == "L":
-        topic, payload = _light_config(entity_id, entity_name, config)
+        topic, payload = _light_config(entity_id, entity_name, config, prefix)
         mqtt_client.publish(topic, json.dumps(payload), retain=True)
         _LOGGER.info("Published autodiscovery config for light: %s", entity_name)
 
     elif entity_type == "R":
-        topic, payload = _switch_config(entity_id, entity_name)
+        topic, payload = _switch_config(entity_id, entity_name, prefix)
         mqtt_client.publish(topic, json.dumps(payload), retain=True)
         _LOGGER.info("Publish autodiscovery config for switches (relays): %s", entity_name)
 
     elif entity_type == "C":
-        topic, payload = _cover_config(entity_id, entity_name)
+        topic, payload = _cover_config(entity_id, entity_name, prefix)
         mqtt_client.publish(topic, json.dumps(payload), retain=True)
         _LOGGER.info("Publish autodiscovery config for cover: %s", entity_name)
 
     elif entity_type == "H":
-        topic, payload = _hvac_config(entity_id, entity_name)
+        topic, payload = _hvac_config(entity_id, entity_name, prefix)
         mqtt_client.publish(topic, json.dumps(payload), retain=True)
         _LOGGER.info("Published autodiscovery config for consolidated HVAC entity: %s", entity_name)
 
     elif entity_type == "S":
-        topic, payload = _alarm_config(entity_id, entity_name)
+        topic, payload = _alarm_config(entity_id, entity_name, prefix)
         mqtt_client.publish(topic, json.dumps(payload), retain=True)
         _LOGGER.info("Published autodiscovery config for alarm: %s", entity_name)
 
     elif entity_type == "Z":
-        sensor_topic, sensor_payload, switch_topic, switch_payload = _zone_config(entity_id, entity_name)
+        sensor_topic, sensor_payload, switch_topic, switch_payload = _zone_config(entity_id, entity_name, prefix)
         mqtt_client.publish(sensor_topic, json.dumps(sensor_payload), retain=True)
         _LOGGER.info("Published autodiscovery config for binary sensor (zone): %s", entity_name)
         mqtt_client.publish(switch_topic, json.dumps(switch_payload), retain=True)
         _LOGGER.info("Published autodiscovery config for zone bypass switch: %s", entity_name)
 
     elif entity_type == "M":
-        topic, payload = _scene_config(entity_id, entity_name)
+        topic, payload = _scene_config(entity_id, entity_name, prefix)
         mqtt_client.publish(topic, json.dumps(payload), retain=True)
         _LOGGER.info("Published autodiscovery config for scene (scenario): %s", entity_name)

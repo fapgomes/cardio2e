@@ -47,7 +47,7 @@ def initialize_scenarios(serial_conn, mqtt_client, config, app_state):
                 entity_name = fetched_name
 
         app_state.set_entity_name("M", scenario_id, entity_name)
-        publish_autodiscovery_config(mqtt_client, scenario_id, entity_name, "M")
+        publish_autodiscovery_config(mqtt_client, scenario_id, entity_name, "M", config)
         _LOGGER.info("Scenario %d initialized: %s", scenario_id, entity_name)
 
     _LOGGER.info("Scenario initialization complete (%d scenarios).", config.nscenarios)

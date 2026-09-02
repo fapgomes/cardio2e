@@ -124,10 +124,10 @@ def _publish_heartbeat(mqtt_client, app_state):
     _LOGGER.debug("Heartbeat published: %s", timestamp)
 
 
-def _diagnostic_entity_config(domain, object_id, name, value_template, extra):
+def _diagnostic_entity_config(domain, object_id, name, value_template, extra, discovery_prefix):
     """Build an autodiscovery config for a diagnostic entity that reads a field
     from the shared diagnostics JSON."""
-    config_topic = f"homeassistant/{domain}/{object_id}/config"
+    config_topic = f"{discovery_prefix}/{domain}/{object_id}/config"
     payload = {
         "name": name,
         "unique_id": object_id,
@@ -144,10 +144,10 @@ def _diagnostic_entity_config(domain, object_id, name, value_template, extra):
     return config_topic, payload
 
 
-def _publish_diagnostics_autodiscovery(mqtt_client):
+def _publish_diagnostics_autodiscovery(mqtt_client, discovery_prefix="homeassistant"):
     """Publish autodiscovery config for the diagnostics sensor and the
     individual diagnostic entities derived from the diagnostics JSON."""
-    config_topic = "homeassistant/sensor/cardio2e_diagnostics/config"
+    config_topic = f"{discovery_prefix}/sensor/cardio2e_diagnostics/config"
     config_payload = {
         "name": "Cardio2e Diagnostics",
         "unique_id": "cardio2e_diagnostics",
@@ -173,21 +173,25 @@ def _publish_diagnostics_autodiscovery(mqtt_client):
             "{{ value_json.seconds_since_last_message }}",
             {"unit_of_measurement": "s", "device_class": "duration",
              "state_class": "measurement", "icon": "mdi:timer-sand"},
+            discovery_prefix,
         ),
         _diagnostic_entity_config(
             "sensor", "cardio2e_pending_queries", "Cardio2e Pending Queries",
             "{{ value_json.pending_queries }}",
             {"state_class": "measurement", "icon": "mdi:tray-full"},
+            discovery_prefix,
         ),
         _diagnostic_entity_config(
             "sensor", "cardio2e_reconnects", "Cardio2e Reconnects",
             "{{ value_json.reconnects }}",
             {"state_class": "total_increasing", "icon": "mdi:restart"},
+            discovery_prefix,
         ),
         _diagnostic_entity_config(
             "binary_sensor", "cardio2e_reader", "Cardio2e Reader",
             "{{ 'ON' if value_json.reader_active else 'OFF' }}",
             {"payload_on": "ON", "payload_off": "OFF", "device_class": "running"},
+            discovery_prefix,
         ),
     ]
     for topic, payload in entities:
@@ -207,7 +211,7 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state, shutdown_eve
     last_sync = time.monotonic()
 
     # Publish diagnostics autodiscovery on start
-    _publish_diagnostics_autodiscovery(mqtt_client)
+    _publish_diagnostics_autodiscovery(mqtt_client, config.ha_discover_prefix)
 
     def on_message(msg, message_parts):
         _LOGGER.info("Processing individual message: %s", msg)
@@ -330,6 +334,8 @@ def _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, 
         state = int(message_parts[3])
         light_state = "ON" if state > 0 else "OFF"
         mqtt_client.publish(f"cardio2e/light/state/{entity_id}", light_state, retain=True)
+        if config is not None and int(entity_id) in config.dimmer_lights:
+            mqtt_client.publish(f"cardio2e/light/brightness/{entity_id}", state, retain=True)
         return light_state
 
     elif entity_type == "R" and len(message_parts) >= 4:

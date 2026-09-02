@@ -20,3 +20,10 @@ class TestFormatErrorMessage:
         msg = format_error_message(["@N", "X", "99"])
         assert "Unknown error message (99)" in msg
         assert "@N X 99" in msg
+
+
+class TestInitializeErrorPayloadPrefix:
+    def test_uses_configured_discovery_prefix(self, mqtt):
+        from cardio2e_modules.cardio2e_errors import initialize_error_payload
+        initialize_error_payload(mqtt, discovery_prefix="ha")
+        assert "ha/sensor/cardio2e_errors/config" in mqtt.topics()

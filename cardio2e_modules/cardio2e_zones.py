@@ -56,6 +56,9 @@ def handle_bypass_command(serial_conn, mqtt_client, topic, payload, app_state):
 
     payload = payload.upper()
 
+    # Compute the new state under the lock, but release it before the serial
+    # write (throttled, up to 150ms) and the MQTT publishes, so the reader
+    # thread is never blocked behind our I/O.
     with app_state.lock:
         _LOGGER.info("Current Zones: %s", app_state.bypass_states)
 
@@ -65,30 +68,34 @@ def handle_bypass_command(serial_conn, mqtt_client, topic, payload, app_state):
 
         zone_bypass_states = list(app_state.bypass_states)
 
-        if payload == "ON":
-            zone_bypass_states[zone_id - 1] = "Y"
-            _LOGGER.info("Zone %d deactivated", zone_id)
-        elif payload == "OFF":
-            zone_bypass_states[zone_id - 1] = "N"
-            _LOGGER.info("Zone %d activated", zone_id)
-        else:
-            _LOGGER.error("Invalid payload for zone bypass control: %s", payload)
-            return
+    if payload == "ON":
+        zone_bypass_states[zone_id - 1] = "Y"
+        _LOGGER.info("Zone %d deactivated", zone_id)
+    elif payload == "OFF":
+        zone_bypass_states[zone_id - 1] = "N"
+        _LOGGER.info("Zone %d activated", zone_id)
+    else:
+        _LOGGER.error("Invalid payload for zone bypass control: %s", payload)
+        return
 
-        try:
-            success = send_command(serial_conn, "B", 1, "".join(zone_bypass_states))
-            if success:
-                new_states = "".join(zone_bypass_states)
-                app_state.bypass_states = new_states
-                _LOGGER.info("Bypass states updated successfully: %s", new_states)
-                # Publish the known new state directly. We do NOT re-query the
-                # controller (@G B 1), which it rejects (@N B 2) and which, fired
-                # per toggle, floods and garbles the RS-232 stream.
-                publish_bypass_states(mqtt_client, new_states)
-            else:
-                _LOGGER.warning("Bypass command failed, state not updated.")
-        except Exception as e:
-            _LOGGER.error("Error sending bypass command: %s", e)
+    new_states = "".join(zone_bypass_states)
+    try:
+        success = send_command(serial_conn, "B", 1, new_states)
+    except Exception as e:
+        _LOGGER.error("Error sending bypass command: %s", e)
+        return
+
+    if not success:
+        _LOGGER.warning("Bypass command failed, state not updated.")
+        return
+
+    with app_state.lock:
+        app_state.bypass_states = new_states
+    _LOGGER.info("Bypass states updated successfully: %s", new_states)
+    # Publish the known new state directly. We do NOT re-query the
+    # controller (@G B 1), which it rejects (@N B 2) and which, fired
+    # per toggle, floods and garbles the RS-232 stream.
+    publish_bypass_states(mqtt_client, new_states)
 
 
 def process_zone_update(mqtt_client, message_parts, config, app_state):

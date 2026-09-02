@@ -77,3 +77,18 @@ class TestAckWithoutUpdateRequery:
         )
         time.sleep(0.2)
         assert serial_conn.written == []
+
+
+class TestGetEntityStateLight:
+    def test_dimmer_republishes_brightness(self, mqtt, serial_conn, app_state):
+        serial_conn.feed(b"@I L 5 40\r")
+        cfg = AppConfig(dimmer_lights=[5])
+        state = cardio2e_listener._get_entity_state(serial_conn, mqtt, 5, "L", cfg, app_state)
+        assert state == "ON"
+        assert mqtt.payload_for("cardio2e/light/state/5") == "ON"
+        assert mqtt.payload_for("cardio2e/light/brightness/5") == 40
+
+    def test_non_dimmer_publishes_no_brightness(self, mqtt, serial_conn, app_state):
+        serial_conn.feed(b"@I L 5 40\r")
+        cardio2e_listener._get_entity_state(serial_conn, mqtt, 5, "L", AppConfig(), app_state)
+        assert "cardio2e/light/brightness/5" not in mqtt.topics()

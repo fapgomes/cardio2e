@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+- A corrupted RS-232 line (e.g. `@A L 1x`, non-numeric id) no longer kills the serial reader. The handler exception is logged with a traceback and the next line is processed, instead of stopping the reader and forcing a full reconnect and re-login.
+- A failed login is no longer ignored. Previously the bridge announced "Cardio2e ready" and subscribed to command topics even when the controller never accepted the login; it now enters the reconnect backoff. A password rejection (`@N P`) fails fast with a clear log message instead of retrying 5 times with the same password.
+- Remote syslog now uses the stdlib `logging.handlers.SysLogHandler` (correct priority per log level, ident `cardio2e:`) instead of a custom UDP handler that hard-coded `<14>` for every level.
+- The periodic sync republishes the brightness of dimmer lights, as spontaneous `@I L` updates already did.
+- `handle_bypass_command` no longer holds the `AppState` lock while writing to the serial port (throttled, up to 150ms) and publishing to MQTT, so the reader thread is not blocked behind that I/O.
+- `ha_discover_prefix` is now honoured by all autodiscovery topics (entities, error sensor and diagnostic entities). It was read from the config but every topic hard-coded `homeassistant/`. The default is unchanged.
+
+### Other
+- Add `tests/test_main.py` covering the entry-point module (login failure handling, syslog setup).
+
 ## v2.3.5 - 2026-07-16
 
 ### Fixes

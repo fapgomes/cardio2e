@@ -151,3 +151,40 @@ class TestReaderQueryIntegration:
         finally:
             reader.stop()
             reader.join(timeout=2)
+
+
+class TestReaderResilience:
+    """A corrupted line must not kill the reader: a handler exception is
+    logged and the next line is still processed (and the thread stays alive)."""
+
+    @staticmethod
+    def _handler(seen):
+        def on_message(msg, parts):
+            if parts[2] == "bad":
+                raise ValueError("corrupted id")
+            seen.append(parts)
+        return on_message
+
+    def test_handler_exception_does_not_stop_processing(self):
+        seen = []
+        reader = cs.SerialReader(FakeSerial(), on_message=self._handler(seen))
+        reader._buffer = "@A L bad\r@I L 5 100\r"
+        reader._process_buffer()  # must not raise
+        assert seen == [["@I", "L", "5", "100"]]
+
+    def test_handler_exception_keeps_thread_alive(self):
+        conn = FakeSerial(to_read=b"@A L bad\r")
+        seen = []
+        reader = cs.SerialReader(conn, on_message=self._handler(seen))
+        reader.start()
+        try:
+            time.sleep(0.1)
+            assert reader.is_alive()
+            conn.feed(b"@I L 5 100\r")
+            deadline = time.time() + 2
+            while not seen and time.time() < deadline:
+                time.sleep(0.01)
+            assert seen == [["@I", "L", "5", "100"]]
+        finally:
+            reader.stop()
+            reader.join(timeout=2)

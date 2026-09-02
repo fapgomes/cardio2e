@@ -47,3 +47,10 @@ class TestHandleSetCommand:
         cfg = AppConfig()
         cardio2e_scenarios.handle_set_command(serial_conn, "cardio2e/scene/set/3", "12345", cfg)
         assert serial_conn.last_written_str() == "@S M 3 12345\r"
+
+
+class TestScenarioDiscoveryPrefix:
+    def test_uses_configured_prefix(self, mqtt, serial_conn, app_state):
+        cfg = AppConfig(nscenarios=1, fetch_scenario_names=False, ha_discover_prefix="ha")
+        cardio2e_scenarios.initialize_scenarios(serial_conn, mqtt, cfg, app_state)
+        assert "ha/scene/cardio2e_scene_1/config" in mqtt.topics()

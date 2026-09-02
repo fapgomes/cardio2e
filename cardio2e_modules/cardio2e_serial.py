@@ -247,6 +247,7 @@ def login(serial_conn, password, max_retries=5, timeout=10, post_ack_timeout=15)
     """
     command = f"@S P I {password}{CARDIO2E_TERMINATOR}"
     success_response_prefix = "@A P"
+    nack_response_prefix = "@N P"
     attempts = 0
 
     _LOGGER.info("Logging into cardio2e (usually takes 10 seconds)...")
@@ -270,6 +271,11 @@ def login(serial_conn, password, max_retries=5, timeout=10, post_ack_timeout=15)
                             ack_received = True
                             _LOGGER.info("Login ACK received. Reading state messages...")
                             break
+                        if nack_response_prefix in buffer:
+                            # The controller rejected the login (wrong password).
+                            # Retrying with the same password cannot succeed.
+                            _LOGGER.error("Login rejected by cardio2e (check the password): %r", buffer.strip()[:200])
+                            return None
                     else:
                         time.sleep(0.01)
 
@@ -370,7 +376,12 @@ class SerialReader(threading.Thread):
             for msg, parts in _split_messages(received_message):
                 if _deliver_to_pending(parts, msg):
                     continue
-                self._on_message(msg, parts)
+                try:
+                    self._on_message(msg, parts)
+                except Exception:
+                    # A corrupted line (e.g. a non-numeric id) must not kill the
+                    # reader: log it with traceback and keep processing.
+                    _LOGGER.exception("Error handling message %r; ignoring it.", msg)
 
     def run(self):
         _reader_active.set()

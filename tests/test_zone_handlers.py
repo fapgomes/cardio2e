@@ -73,3 +73,31 @@ class TestHandleBypassCommand:
         states = written[len("@S B 1 "):].rstrip("\r")
         assert len(states) == 16
         assert states[0] == "Y"
+
+
+class TestHandleBypassCommandLocking:
+    def test_lock_not_held_during_serial_write(self, serial_conn, mqtt, app_state, monkeypatch):
+        import threading
+        app_state.bypass_states = "N" * 16
+        acquired = []
+
+        def fake_send(conn, etype, eid, state=None, **kwargs):
+            # Another thread must be able to take the AppState lock while the
+            # (slow, throttled) serial write is in progress.
+            def probe():
+                got = app_state.lock.acquire(timeout=0.2)
+                acquired.append(got)
+                if got:
+                    app_state.lock.release()
+            t = threading.Thread(target=probe)
+            t.start()
+            t.join()
+            return True
+
+        monkeypatch.setattr(cardio2e_zones, "send_command", fake_send)
+        cardio2e_zones.handle_bypass_command(
+            serial_conn, mqtt, "cardio2e/zone/bypass/set/2", "ON", app_state
+        )
+        assert acquired == [True]
+        assert app_state.bypass_states[1] == "Y"
+        assert mqtt.payload_for("cardio2e/zone/bypass/state/2") == "ON"

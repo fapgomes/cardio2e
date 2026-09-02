@@ -76,3 +76,21 @@ class TestScene:
         payload = _published_config(mqtt, "homeassistant/scene/cardio2e_scene_7/config")
         assert payload["unique_id"] == "cardio2e_scene_7"
         assert payload["command_topic"] == "cardio2e/scene/set/7"
+
+
+class TestDiscoveryPrefix:
+    def test_light_uses_configured_prefix(self, mqtt):
+        cfg = AppConfig(ha_discover_prefix="ha")
+        cardio2e_autodiscovery.publish_config(mqtt, 5, "Kitchen", "L", cfg)
+        assert "ha/light/cardio2e_5/config" in mqtt.topics()
+        assert not any(t.startswith("homeassistant/") for t in mqtt.topics())
+
+    def test_zone_uses_configured_prefix_for_both_entities(self, mqtt):
+        cfg = AppConfig(ha_discover_prefix="ha")
+        cardio2e_autodiscovery.publish_config(mqtt, 4, "Hall", "Z", cfg)
+        assert "ha/binary_sensor/cardio2e_zone_4/config" in mqtt.topics()
+        assert "ha/switch/cardio2e_zone_4_bypass/config" in mqtt.topics()
+
+    def test_default_prefix_without_config(self, mqtt):
+        cardio2e_autodiscovery.publish_config(mqtt, 3, "Pump", "R")
+        assert "homeassistant/switch/cardio2e_switch_3/config" in mqtt.topics()

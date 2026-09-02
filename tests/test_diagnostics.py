@@ -77,3 +77,11 @@ class TestHeartbeatPayload:
             "timestamp",
         ):
             assert key in diag
+
+
+class TestDiagnosticAutodiscoveryPrefix:
+    def test_uses_configured_discovery_prefix(self, mqtt):
+        cardio2e_listener._publish_diagnostics_autodiscovery(mqtt, discovery_prefix="ha")
+        assert "ha/sensor/cardio2e_diagnostics/config" in mqtt.topics()
+        assert "ha/binary_sensor/cardio2e_reader/config" in mqtt.topics()
+        assert not any(t.startswith("homeassistant/") for t in mqtt.topics())

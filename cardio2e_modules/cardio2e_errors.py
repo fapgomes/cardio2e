@@ -34,9 +34,9 @@ def report_error_state(mqtt_client, error):
     _LOGGER.info("Published state for error: %s", error)
 
 
-def initialize_error_payload(mqtt_client):
+def initialize_error_payload(mqtt_client, discovery_prefix="homeassistant"):
     """Publish autodiscovery config for the error sensor in Home Assistant."""
-    sensor_config_topic = "homeassistant/sensor/cardio2e_errors/config"
+    sensor_config_topic = f"{discovery_prefix}/sensor/cardio2e_errors/config"
     state_topic = "cardio2e/errors/state"
 
     sensor_config_payload = {

@@ -102,3 +102,14 @@ class TestCentralWrite:
         # No ACK in buffer -> login retries and fails fast, but must have written via _write
         cs.login(serial_conn, "12345", max_retries=1, timeout=0.05, post_ack_timeout=0.05)
         assert any(c.startswith("@S P I 12345") for c in calls)
+
+
+class TestLoginWrongPassword:
+    def test_nack_fails_fast_without_retry(self, serial_conn):
+        import time
+        serial_conn.feed(b"@N P 4\r")
+        start = time.monotonic()
+        result = cardio2e_serial.login(serial_conn, "0000", max_retries=3, timeout=2, post_ack_timeout=1)
+        assert result is None
+        assert time.monotonic() - start < 1.0  # no retries after a password NACK
+        assert len(serial_conn.written) == 1
