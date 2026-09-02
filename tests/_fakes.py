@@ -80,6 +80,7 @@ def install_paho_stub(with_callback_api_version=True):
             self.ctor_args = args
             self._userdata = None
             self.subscriptions = []
+            self.unsubscriptions = []
             self.published = []
             self.will = None
             self.credentials = None
@@ -113,6 +114,15 @@ def install_paho_stub(with_callback_api_version=True):
 
         def subscribe(self, topic):
             self.subscriptions.append(topic)
+
+        def unsubscribe(self, topic):
+            self.unsubscriptions.append(topic)
+
+        def loop_stop(self):
+            self.loop_started = False
+
+        def disconnect(self):
+            self.connected_to = None
 
         def publish(self, topic, payload=None, qos=0, retain=False):
             self.published.append((topic, payload, qos, retain))

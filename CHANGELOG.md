@@ -22,6 +22,7 @@
 - HVAC mode/temperature-status fallback is consistently `unknown` (one code path published `Unknown`). Remove unused imports; move function-local imports (`query_name`, `re`) to module level.
 - `@G` queries fail fast on a `@N` reply. A NACK for the queried type/id (e.g. `@N L 5 2`) is a definitive answer, so the query returns immediately and logs the decoded error instead of waiting for the full timeout on every retry.
 - The post-ack state verification (v2.3.5) no longer spawns a thread per `@A L/R`. Checks are queued in `AppState` and run by the housekeeping loop (every 0.5s), so a scene toggling 20 lights costs no threads. Same 2s grace period, same condition, covers still excluded; a repeated ack for the same entity is checked once.
+- Lighter serial reconnection. The MQTT client now survives a serial loss instead of being destroyed and re-created: commands are unsubscribed while the port is down and re-enabled after the re-login, and the command handlers are pointed at the reopened port. Entity names already known from a previous login are reused instead of being fetched again from the controller, which cut the re-login time from many seconds to roughly the login itself. `online` is now published only after init completes (also on MQTT reconnects), so Home Assistant no longer sees the bridge as available while the serial port is down or a login is still in progress.
 
 ## v2.3.5 - 2026-07-16
 

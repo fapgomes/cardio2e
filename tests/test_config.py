@@ -79,6 +79,12 @@ class TestAppStateKnownIds:
         assert app_state.get_known_entity_ids("C") == []
 
 
+    def test_get_entity_name(self, app_state):
+        app_state.set_entity_name("L", 5, "Kitchen")
+        assert app_state.get_entity_name("L", 5) == "Kitchen"
+        assert app_state.get_entity_name("L", "5") == "Kitchen"
+        assert app_state.get_entity_name("L", 6) is None
+
     def test_register_entity_without_name(self, app_state):
         app_state.register_entity("L", 5)
         app_state.register_entity("L", "2")

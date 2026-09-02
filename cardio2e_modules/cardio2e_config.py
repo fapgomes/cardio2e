@@ -166,6 +166,11 @@ class AppState(object):
             self._known_entities.add((entity_type, int(entity_id)))
             self._entity_names[(entity_type, int(entity_id))] = name
 
+    def get_entity_name(self, entity_type, entity_id):
+        """Return the stored friendly name of an entity, or None."""
+        with self._lock:
+            return self._entity_names.get((entity_type, int(entity_id)))
+
     def get_entity_label(self, prefix, entity_type, entity_id):
         """Return 'prefix name (id: N)' if name exists, otherwise 'prefix N'."""
         with self._lock:

@@ -91,38 +91,62 @@ def _on_connect(client, userdata, flags, rc, properties=None):
 
     _LOGGER.info("Connected to MQTT broker (code %s)", rc)
 
-    # Publish availability on (re)connect
-    publish_available(client)
-
-    # Only subscribe if init is complete (login done, states populated)
+    # Only announce availability and accept commands once init is complete
+    # (login done, states populated). Before that — first start, or a serial
+    # reconnect in progress — the bridge is not really available.
     if userdata.get("init_complete", False):
+        publish_available(client)
         _subscribe_all(client)
     else:
         _LOGGER.info("MQTT connected, waiting for init to complete before subscribing.")
 
 
+_COMMAND_TOPICS = (
+    "cardio2e/light/set/#",
+    "cardio2e/switch/set/#",
+    "cardio2e/cover/set/#",
+    "cardio2e/cover/command/#",
+    "cardio2e/hvac/+/set/#",
+    "cardio2e/alarm/set/#",
+    "cardio2e/zone/bypass/set/#",
+    "cardio2e/scene/set/#",
+)
+
+
 def _subscribe_all(client):
     """Subscribe to all command topics."""
-    client.subscribe("cardio2e/light/set/#")
-    client.subscribe("cardio2e/switch/set/#")
-    client.subscribe("cardio2e/cover/set/#")
-    client.subscribe("cardio2e/cover/command/#")
-    client.subscribe("cardio2e/hvac/+/set/#")
-    client.subscribe("cardio2e/alarm/set/#")
-    client.subscribe("cardio2e/zone/bypass/set/#")
-    client.subscribe("cardio2e/scene/set/#")
+    for topic in _COMMAND_TOPICS:
+        client.subscribe(topic)
     _LOGGER.info("Subscribed to all necessary topics.")
+
+
+def _userdata_of(mqtt_client):
+    try:
+        return mqtt_client.user_data_get()
+    except AttributeError:
+        # Fallback for paho versions without the public getter
+        return mqtt_client._userdata
 
 
 def subscribe_after_init(mqtt_client):
     """Call after login/init is complete to start receiving commands."""
-    try:
-        userdata = mqtt_client.user_data_get()
-    except AttributeError:
-        # Fallback for paho versions without the public getter
-        userdata = mqtt_client._userdata
-    userdata["init_complete"] = True
+    _userdata_of(mqtt_client)["init_complete"] = True
     _subscribe_all(mqtt_client)
+
+
+def suspend_commands(mqtt_client):
+    """Stop receiving commands (serial connection lost). The client stays
+    connected; ``subscribe_after_init`` re-enables commands after the
+    re-login, and ``_on_connect`` will not subscribe in the meantime."""
+    _userdata_of(mqtt_client)["init_complete"] = False
+    for topic in _COMMAND_TOPICS:
+        mqtt_client.unsubscribe(topic)
+    _LOGGER.info("Command topics unsubscribed until re-initialization.")
+
+
+def set_serial_conn(mqtt_client, serial_conn):
+    """Point the command handlers at a (re)opened serial connection."""
+    _userdata_of(mqtt_client)["serial_conn"] = serial_conn
 
 
 def _on_disconnect(client, userdata, flags_or_rc, reason_code=None, properties=None):

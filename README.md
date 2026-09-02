@@ -36,8 +36,10 @@ autodiscovery — no manual YAML is required.
   controller.
 - On startup the bridge logs in, parses the controller's initial state dump, and
   initializes covers and scenarios before subscribing to command topics.
-- The serial connection auto-reconnects with exponential backoff, and an MQTT
-  Last Will marks the bridge offline if it dies.
+- The serial connection auto-reconnects with exponential backoff. The MQTT
+  client survives serial reconnects (commands are suspended while the port is
+  down, and entity names are reused instead of re-fetched), and an MQTT Last
+  Will marks the bridge offline if it dies.
 
 ## Requirements
 

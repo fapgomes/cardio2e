@@ -9,7 +9,10 @@ import threading
 import serial
 
 from cardio2e_modules.cardio2e_config import load_config, AppState
-from cardio2e_modules.cardio2e_mqtt import create_mqtt_client, publish_not_available, subscribe_after_init
+from cardio2e_modules.cardio2e_mqtt import (
+    create_mqtt_client, publish_available, publish_not_available,
+    subscribe_after_init, suspend_commands, set_serial_conn,
+)
 from cardio2e_modules.cardio2e_serial import login, logout, query_name
 from cardio2e_modules.cardio2e_listener import listen_for_updates, _get_entity_state
 from cardio2e_modules.cardio2e_autodiscovery import publish_config as publish_autodiscovery_config
@@ -41,7 +44,13 @@ def get_name(serial_conn, entity_id, entity_type, mqtt_client, config, app_state
         _LOGGER.info("Published autodiscovery config for security entity %s %d without fetching name.", entity_type, entity_id)
         return entity_name
 
-    if entity_type == "C":
+    cached_name = app_state.get_entity_name(entity_type, entity_id)
+    if cached_name:
+        # Serial reconnect: the name was fetched on a previous login. Reuse it
+        # instead of spending seconds per entity asking the controller again.
+        entity_name = cached_name
+        _LOGGER.debug("Using cached name for %s %d: %s", entity_type, entity_id, entity_name)
+    elif entity_type == "C":
         # Covers are probed blindly over 1..ncovers; undefined ones never answer,
         # so fail fast (real covers reply in well under a second).
         entity_name = query_name(serial_conn, entity_id, entity_type, max_retries=2, timeout=2)
@@ -214,7 +223,7 @@ def main():
                 _LOGGER.info("Opening serial connection...")
                 serial_conn = _connect_serial(cfg)
 
-            # Connect MQTT
+            # Connect MQTT (once; it survives serial reconnects)
             if mqtt_client is None:
                 _LOGGER.info("Connecting to MQTT broker...")
 
@@ -222,14 +231,18 @@ def main():
                     return get_entity_state(s_conn, m_client, eid, etype, cfg, app_state)
 
                 mqtt_client = create_mqtt_client(cfg, serial_conn, app_state, _get_entity_state_fn)
+            else:
+                set_serial_conn(mqtt_client, serial_conn)
 
             # Login and initialize (populates all entity states)
             _do_login_and_init(serial_conn, mqtt_client, cfg, app_state)
 
             _LOGGER.debug("HVAC states after login/init: %s", app_state.hvac_states)
 
-            # Now subscribe to command topics (states are populated, safe to receive commands)
+            # Now subscribe to command topics (states are populated, safe to
+            # receive commands) and announce availability.
             subscribe_after_init(mqtt_client)
+            publish_available(mqtt_client)
 
             _LOGGER.info("\n################\nCardio2e ready. Listening for events.\n################")
 
@@ -244,7 +257,6 @@ def main():
                 break
 
             _LOGGER.warning("Serial connection lost. Will reconnect...")
-            publish_not_available(mqtt_client)
 
         except LoginFailed as e:
             if shutdown_event.is_set():
@@ -270,15 +282,21 @@ def main():
                 pass
         serial_conn = None
 
-        # Stop MQTT client so we can re-create it with new serial_conn
+        # Keep the MQTT client: mark the bridge offline and stop accepting
+        # commands until the next successful login. Only drop the client if it
+        # is itself unusable, so it gets re-created on the next attempt.
         if mqtt_client:
             try:
                 publish_not_available(mqtt_client)
-                mqtt_client.loop_stop()
-                mqtt_client.disconnect()
-            except Exception:
-                pass
-            mqtt_client = None
+                suspend_commands(mqtt_client)
+            except Exception as e:
+                _LOGGER.warning("MQTT client unusable (%s); it will be re-created.", e)
+                try:
+                    mqtt_client.loop_stop()
+                    mqtt_client.disconnect()
+                except Exception:
+                    pass
+                mqtt_client = None
 
         # Count the reconnection for diagnostics
         app_state.increment_reconnects()

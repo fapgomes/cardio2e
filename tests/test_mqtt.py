@@ -169,3 +169,46 @@ class TestPahoCallbackCompatibility:
         # v2: on_disconnect(client, userdata, disconnect_flags, reason_code, properties)
         m._on_disconnect(client, {}, {}, rc(0), None)
         m._on_disconnect(client, {}, {}, rc(0x8B), None)
+
+
+class TestSerialReconnectSupport:
+    """On a serial loss the MQTT client is kept; commands are suspended until
+    the re-login finishes and the new serial handle is swapped in."""
+
+    def _client(self):
+        return cardio2e_mqtt.create_mqtt_client(AppConfig(), FakeSerial(), AppState(), lambda *a: None)
+
+    def test_suspend_commands_unsubscribes_and_clears_init_flag(self):
+        client = self._client()
+        cardio2e_mqtt.subscribe_after_init(client)
+        cardio2e_mqtt.suspend_commands(client)
+        assert client.user_data_get()["init_complete"] is False
+        assert sorted(client.unsubscriptions) == sorted(client.subscriptions)
+
+    def test_set_serial_conn_replaces_handle_used_by_handlers(self):
+        client = self._client()
+        new_serial = FakeSerial()
+        cardio2e_mqtt.set_serial_conn(client, new_serial)
+        ud = client.user_data_get()
+        ud["init_complete"] = True
+        cardio2e_mqtt._on_message(client, ud, _Msg("cardio2e/light/set/5", "ON"))
+        assert new_serial.last_written_str() == "@S L 5 100\r"
+
+
+class TestOnConnectAvailability:
+    def _availability(self, client):
+        return [p for t, p, _q, _r in client.published if t == AVAILABILITY_TOPIC]
+
+    def test_does_not_publish_online_before_init(self):
+        client = cardio2e_mqtt.create_mqtt_client(AppConfig(), FakeSerial(), AppState(), lambda *a: None)
+        cardio2e_mqtt._on_connect(client, client.user_data_get(), {}, 0)
+        # Not initialised (e.g. serial down, re-login pending): must stay offline
+        assert self._availability(client) == []
+        assert client.subscriptions == []
+
+    def test_publishes_online_and_resubscribes_after_init(self):
+        client = cardio2e_mqtt.create_mqtt_client(AppConfig(), FakeSerial(), AppState(), lambda *a: None)
+        client.user_data_get()["init_complete"] = True
+        cardio2e_mqtt._on_connect(client, client.user_data_get(), {}, 0)
+        assert self._availability(client) == ["online"]
+        assert "cardio2e/light/set/#" in client.subscriptions
