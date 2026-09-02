@@ -188,3 +188,25 @@ class TestReaderResilience:
         finally:
             reader.stop()
             reader.join(timeout=2)
+
+
+class TestCoordinatedQueryNack:
+    def test_reader_delivers_nack_to_pending_query(self):
+        conn = FakeSerial()
+        dispatched = []
+        reader = cs.SerialReader(conn, on_message=lambda msg, parts: dispatched.append(parts))
+        reader.start()
+
+        def respond():
+            time.sleep(0.1)
+            conn.feed(b"@N L 5 2\r")
+        threading.Thread(target=respond, daemon=True).start()
+
+        try:
+            start = time.monotonic()
+            assert cs.query_state(conn, 5, "L", timeout=2.0, max_retries=3) is None
+            assert time.monotonic() - start < 1.0
+            assert len(conn.written) == 1
+        finally:
+            reader.stop()
+            reader.join(timeout=2)

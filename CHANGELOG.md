@@ -20,6 +20,7 @@
 - Add `tests/test_main.py` covering the entry-point module (login failure handling, syslog setup).
 - Remove `docs/superpowers/` (local design notes) from the repository and ignore it.
 - HVAC mode/temperature-status fallback is consistently `unknown` (one code path published `Unknown`). Remove unused imports; move function-local imports (`query_name`, `re`) to module level.
+- `@G` queries fail fast on a `@N` reply. A NACK for the queried type/id (e.g. `@N L 5 2`) is a definitive answer, so the query returns immediately and logs the decoded error instead of waiting for the full timeout on every retry.
 
 ## v2.3.5 - 2026-07-16
 

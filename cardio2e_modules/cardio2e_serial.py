@@ -14,6 +14,7 @@ from .cardio2e_constants import (
     HVAC_MODE_TO_CODE,
     FAN_STATE_TO_CODE,
 )
+from .cardio2e_errors import format_error_message
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -197,6 +198,28 @@ def _send_and_match(serial_conn, command, predicate, timeout, max_retries):
     return None
 
 
+def _is_nack_for(parts, entity_type, entity_id=None):
+    """True if `parts` is a ``@N`` reply for `entity_type` (and `entity_id`,
+    when given). Protocol format is ``@N t c`` or ``@N t o c``."""
+    if len(parts) < 3 or parts[0] != "@N" or parts[1] != entity_type:
+        return False
+    return entity_id is None or len(parts) == 3 or parts[2] == str(entity_id)
+
+
+def _query(serial_conn, command, predicate, nack_predicate, timeout, max_retries):
+    """Send a ``@G`` query. Returns the matching ``@I`` line, or None when
+    there was no reply or the controller answered with ``@N`` (a NACK is a
+    definitive answer, so it is not retried)."""
+    def matches(parts):
+        return predicate(parts) or nack_predicate(parts)
+
+    line = _send_and_match(serial_conn, command, matches, timeout, max_retries)
+    if line is not None and line.startswith("@N"):
+        _LOGGER.warning("Query %r rejected by cardio2e: %s", command.strip(), format_error_message(line.split()))
+        return None
+    return line
+
+
 def query_name(serial_conn, entity_id, entity_type, max_retries=3, timeout=10):
     """
     Query the name of an entity via RS-232.
@@ -208,7 +231,10 @@ def query_name(serial_conn, entity_id, entity_type, max_retries=3, timeout=10):
     def predicate(parts):
         return len(parts) >= 3 and parts[0] == "@I" and parts[1] == "N" and parts[2] == entity_type
 
-    line = _send_and_match(serial_conn, command, predicate, timeout, max_retries)
+    def nack_predicate(parts):
+        return _is_nack_for(parts, "N")
+
+    line = _query(serial_conn, command, predicate, nack_predicate, timeout, max_retries)
     if line is None:
         _LOGGER.warning("Could not get entity name %s %s after %d attempts.", entity_type, entity_id, max_retries)
         return None
@@ -226,12 +252,18 @@ def query_state(serial_conn, entity_id, entity_type, timeout=0.5, max_retries=5)
     if entity_type in ("Z", "B"):
         def predicate(parts):
             return len(parts) >= 2 and parts[0] == "@I" and parts[1] == entity_type
+
+        def nack_predicate(parts):
+            return _is_nack_for(parts, entity_type)
     else:
         def predicate(parts):
             return (len(parts) >= 3 and parts[0] == "@I"
                     and parts[1] == entity_type and parts[2] == str(entity_id))
 
-    line = _send_and_match(serial_conn, command, predicate, timeout, max_retries)
+        def nack_predicate(parts):
+            return _is_nack_for(parts, entity_type, entity_id)
+
+    line = _query(serial_conn, command, predicate, nack_predicate, timeout, max_retries)
     if line is None:
         _LOGGER.warning("Could not get state for entity %s %s after %d attempts.", entity_type, entity_id, max_retries)
         return None

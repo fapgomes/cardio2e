@@ -113,3 +113,40 @@ class TestLoginWrongPassword:
         assert result is None
         assert time.monotonic() - start < 1.0  # no retries after a password NACK
         assert len(serial_conn.written) == 1
+
+
+class TestQueryNack:
+    """A @N reply to a @G query is a definitive answer: retrying the same query
+    cannot succeed, so the query must fail immediately instead of waiting for
+    the full timeout on every attempt."""
+
+    def test_query_state_nack_returns_none_without_retry(self):
+        import time
+        conn = FakeSerial(to_read=b"@N L 5 2\r")
+        start = time.monotonic()
+        assert query_state(conn, 5, "L", timeout=1, max_retries=3) is None
+        assert time.monotonic() - start < 0.5
+        assert len(conn.written) == 1
+
+    def test_query_state_nack_without_object_number(self):
+        conn = FakeSerial(to_read=b"@N L 1\r")
+        assert query_state(conn, 5, "L", timeout=0.2, max_retries=1) is None
+
+    def test_query_state_nack_for_other_entity_is_ignored(self):
+        conn = FakeSerial(to_read=b"@N L 3 2\r@I L 5 100\r")
+        assert query_state(conn, 5, "L", timeout=0.5, max_retries=1) == ["@I", "L", "5", "100"]
+
+    def test_query_name_nack_returns_none_without_retry(self):
+        import time
+        conn = FakeSerial(to_read=b"@N N 2\r")
+        start = time.monotonic()
+        assert query_name(conn, 5, "L", timeout=1, max_retries=3) is None
+        assert time.monotonic() - start < 0.5
+        assert len(conn.written) == 1
+
+    def test_nack_is_logged_with_error_description(self, caplog):
+        import logging
+        conn = FakeSerial(to_read=b"@N L 5 2\r")
+        with caplog.at_level(logging.WARNING, logger="cardio2e_modules.cardio2e_serial"):
+            query_state(conn, 5, "L", timeout=0.2, max_retries=1)
+        assert "out of range" in caplog.text
