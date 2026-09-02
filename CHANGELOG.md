@@ -21,6 +21,7 @@
 - Remove `docs/superpowers/` (local design notes) from the repository and ignore it.
 - HVAC mode/temperature-status fallback is consistently `unknown` (one code path published `Unknown`). Remove unused imports; move function-local imports (`query_name`, `re`) to module level.
 - `@G` queries fail fast on a `@N` reply. A NACK for the queried type/id (e.g. `@N L 5 2`) is a definitive answer, so the query returns immediately and logs the decoded error instead of waiting for the full timeout on every retry.
+- The post-ack state verification (v2.3.5) no longer spawns a thread per `@A L/R`. Checks are queued in `AppState` and run by the housekeeping loop (every 0.5s), so a scene toggling 20 lights costs no threads. Same 2s grace period, same condition, covers still excluded; a repeated ack for the same entity is checked once.
 
 ## v2.3.5 - 2026-07-16
 

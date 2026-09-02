@@ -3,7 +3,6 @@
 import datetime
 import json
 import logging
-import threading
 import time
 
 from .cardio2e_serial import send_date, query_state, SerialReader, reader_active, pending_count
@@ -36,34 +35,37 @@ ACK_FOLLOWUP_DELAY = 2.0  # seconds
 _LOGGER = logging.getLogger(__name__)
 
 
-def _schedule_ack_verification(serial_conn, mqtt_client, config, app_state, entity_type, entity_id):
-    """Re-query an entity's state if no @I update follows its @A ack.
+def _schedule_ack_verification(app_state, entity_type, entity_id):
+    """Queue a check that an @I update follows this entity's @A ack.
 
     The controller acknowledges an action with ``@A <type> <id>`` and then
     broadcasts the new state as ``@I <type> <id> <value>``. When that @I is
     lost or corrupted on the RS-232 line, the published state goes stale until
-    the next periodic sync (hours). Only lights (L) and relays (R) are
+    the next periodic sync (hours). The check is queued in ``AppState`` and
+    run by the housekeeping loop (see ``_run_due_ack_verifications``), so a
+    burst of acks costs no threads. Only lights (L) and relays (R) are
     verified: ``@G C`` makes the controller re-drive the cover motor, so
     covers must never be re-queried.
     """
-    ack_time = time.monotonic()
+    now = time.monotonic()
+    app_state.schedule_ack_check(entity_type, entity_id, now, now + ACK_FOLLOWUP_DELAY)
 
-    def _verify():
-        time.sleep(ACK_FOLLOWUP_DELAY)
+
+def _run_due_ack_verifications(serial_conn, mqtt_client, config, app_state, now=None):
+    """Run the queued ack checks that are due: re-query the state of every
+    entity whose @A ack was not followed by an @I update."""
+    if now is None:
+        now = time.monotonic()
+    for entity_type, entity_id, ack_time in app_state.pop_due_ack_checks(now):
         last_update = app_state.last_entity_update(entity_type, entity_id)
         if last_update is not None and last_update >= ack_time:
-            return
+            continue
         _LOGGER.warning(
             "No @I update within %.1fs of @A %s %d ack; re-querying state.",
             ACK_FOLLOWUP_DELAY, entity_type, entity_id,
         )
         state = _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, app_state)
         _LOGGER.info("Re-queried state for %s %d: %s", entity_type, entity_id, state)
-
-    threading.Thread(
-        target=_verify, daemon=True,
-        name="cardio2e-ack-verify-%s%d" % (entity_type, entity_id),
-    ).start()
 
 
 def _sync_all_entities(serial_conn, mqtt_client, config, app_state):
@@ -236,6 +238,9 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state, shutdown_eve
                 _LOGGER.info("Sent time command to cardio2e: %s", time_command)
                 last_time_sent = now
 
+            # Re-query entities whose @A ack was not followed by an @I update
+            _run_due_ack_verifications(serial_conn, mqtt_client, config, app_state, now)
+
             # Publish heartbeat + diagnostics periodically
             if (now - last_heartbeat) >= HEARTBEAT_INTERVAL:
                 _publish_heartbeat(mqtt_client, app_state)
@@ -273,10 +278,10 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
 
         if entity_type == "L":
             _LOGGER.info("OK for action %s", app_state.get_entity_label("light", "L", entity_id))
-            _schedule_ack_verification(serial_conn, mqtt_client, config, app_state, "L", entity_id)
+            _schedule_ack_verification(app_state, "L", entity_id)
         elif entity_type == "R":
             _LOGGER.info("OK for action %s", app_state.get_entity_label("switch", "R", entity_id))
-            _schedule_ack_verification(serial_conn, mqtt_client, config, app_state, "R", entity_id)
+            _schedule_ack_verification(app_state, "R", entity_id)
         elif entity_type == "C":
             _LOGGER.info("OK for action %s", app_state.get_entity_label("cover", "C", entity_id))
         elif entity_type == "S":

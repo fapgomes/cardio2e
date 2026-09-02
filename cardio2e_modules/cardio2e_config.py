@@ -84,6 +84,7 @@ class AppState(object):
         self._entity_names = {}  # {(entity_type, entity_id): name}
         self._entity_states = {}  # {(entity_type, entity_id): last_known_state}
         self._entity_update_times = {}  # {(entity_type, entity_id): monotonic time of last @I}
+        self._pending_ack_checks = {}  # {(entity_type, entity_id): (ack_time, due_at)}
         # Diagnostics counters (atomic increments via lock)
         self._messages_processed = 0
         self._errors_count = 0
@@ -200,6 +201,25 @@ class AppState(object):
         """Return the monotonic time of the last @I update, or None."""
         with self._lock:
             return self._entity_update_times.get((entity_type, int(entity_id)))
+
+    def schedule_ack_check(self, entity_type, entity_id, ack_time, due_at):
+        """Queue a check that an @I update followed the @A ack of an entity.
+        A repeated ack for the same entity replaces the previous check."""
+        with self._lock:
+            self._pending_ack_checks[(entity_type, int(entity_id))] = (ack_time, due_at)
+
+    def pop_due_ack_checks(self, now):
+        """Remove and return the checks due at `now` as a list of
+        (entity_type, entity_id, ack_time) tuples."""
+        with self._lock:
+            due = [
+                (etype, eid, ack_time)
+                for (etype, eid), (ack_time, due_at) in self._pending_ack_checks.items()
+                if due_at <= now
+            ]
+            for etype, eid, _ in due:
+                del self._pending_ack_checks[(etype, eid)]
+            return due
 
     @property
     def lock(self):
