@@ -60,6 +60,9 @@ def create_mqtt_client(config, serial_conn, app_state, get_entity_state_fn):
     client.on_connect = _on_connect
     client.on_disconnect = _on_disconnect
     client.on_message = _on_message
+    # Route paho's internal log (e.g. callback exceptions) into ours; without
+    # this those messages are dropped silently.
+    client.enable_logger(_LOGGER)
 
     client.connect(config.mqtt_address, config.mqtt_port, 60)
     client.loop_start()
@@ -137,14 +140,33 @@ def _on_disconnect(client, userdata, flags_or_rc, reason_code=None, properties=N
 
 
 def _on_message(client, userdata, msg):
-    """Callback when an MQTT message is received - routes to entity handlers."""
+    """Callback when an MQTT message is received - routes to entity handlers.
+
+    Never lets an exception escape: paho re-raises callback exceptions (unless
+    ``suppress_exceptions`` is set), which kills its network thread and leaves
+    the bridge silently unable to receive commands or publish states.
+    """
+    app_state = userdata["app_state"]
+    try:
+        _route_message(client, userdata, msg)
+    except Exception as e:
+        error_msg = "Error handling MQTT message on %s: %s" % (msg.topic, e)
+        _LOGGER.exception(error_msg)
+        app_state.increment_errors()
+        app_state.set_last_error(error_msg)
+
+
+def _route_message(client, userdata, msg):
+    """Decode an MQTT message and dispatch it to the entity handler."""
     serial_conn = userdata["serial_conn"]
     config = userdata["config"]
     app_state = userdata["app_state"]
     get_entity_state_fn = userdata["get_entity_state_fn"]
 
     topic = msg.topic
-    payload = msg.payload.decode()
+    # A non-UTF-8 payload becomes a string with replacement characters, which
+    # the handlers then reject as an invalid payload.
+    payload = msg.payload.decode(errors="replace")
 
     if msg.retain:
         _LOGGER.debug("Ignoring retained message on topic %s: %s", topic, payload)

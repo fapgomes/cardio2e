@@ -15,7 +15,7 @@ from _fakes import FakeSerial, install_paho_stub
 class _Msg:
     def __init__(self, topic, payload, retain=False):
         self.topic = topic
-        self.payload = payload.encode()
+        self.payload = payload if isinstance(payload, bytes) else payload.encode()
         self.retain = retain
 
 
@@ -38,6 +38,12 @@ class TestCreateMqttClient:
         assert client.connected_to == (cfg.mqtt_address, cfg.mqtt_port, 60)
         assert client.loop_started is True
         assert client._userdata["init_complete"] is False
+
+    def test_enables_paho_logger(self):
+        # Without this, paho's own errors (e.g. an exception in a callback)
+        # are silently dropped.
+        client = cardio2e_mqtt.create_mqtt_client(AppConfig(), FakeSerial(), AppState(), lambda *a: None)
+        assert client.logger is cardio2e_mqtt._LOGGER
 
     def test_uses_callback_api_version2_on_paho2(self):
         # conftest installed a paho-2.x-like stub (has CallbackAPIVersion)
@@ -95,6 +101,30 @@ class TestOnMessageRouting:
         ud = _userdata()
         cardio2e_mqtt._on_message(None, ud, _Msg("cardio2e/alarm/set/1", "ARMED_AWAY"))
         assert ud["serial_conn"].last_written_str() == "@S S 1 A 9999\r"
+
+
+class TestOnMessageResilience:
+    """An exception escaping on_message kills paho's network thread (it
+    re-raises unless suppress_exceptions is set), so the bridge silently stops
+    receiving commands and publishing states. Handler errors must be contained."""
+
+    def test_handler_exception_is_contained_and_counted(self, monkeypatch):
+        def boom(*args, **kwargs):
+            raise RuntimeError("handler exploded")
+        monkeypatch.setattr(cardio2e_mqtt.cardio2e_lights, "handle_set_command", boom)
+        ud = _userdata()
+        cardio2e_mqtt._on_message(None, ud, _Msg("cardio2e/light/set/5", "ON"))  # must not raise
+        diag = ud["app_state"].get_diagnostics()
+        assert diag["errors_count"] == 1
+        assert "handler exploded" in diag["last_error"]
+
+    def test_non_utf8_payload_is_rejected_without_error(self):
+        ud = _userdata()
+        cardio2e_mqtt._on_message(None, ud, _Msg("cardio2e/light/set/5", b"\xff\xfe"))  # must not raise
+        # Reaches the handler as a (replaced) string and is rejected as an
+        # invalid payload: nothing on the wire, and not an internal error.
+        assert ud["serial_conn"].written == []
+        assert ud["app_state"].get_diagnostics()["errors_count"] == 0
 
 
 class TestPahoCallbackCompatibility:

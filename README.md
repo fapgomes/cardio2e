@@ -159,5 +159,3 @@ Run the test suite (no hardware or broker required — it uses fakes):
 pip install -r requirements-dev.txt   # or: sudo apt-get install python3-pytest
 python3 -m pytest
 ```
-
-Design and implementation notes live under `docs/superpowers/`.

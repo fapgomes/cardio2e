@@ -88,6 +88,10 @@ def install_paho_stub(with_callback_api_version=True):
             self.on_connect = None
             self.on_disconnect = None
             self.on_message = None
+            self.logger = None
+
+        def enable_logger(self, logger=None):
+            self.logger = logger
 
         def will_set(self, topic, payload, qos=0, retain=False):
             self.will = (topic, payload, qos, retain)

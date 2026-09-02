@@ -1,5 +1,7 @@
 """Tests for zone/bypass MQTT and serial handlers."""
 
+import pytest
+
 from cardio2e_modules import cardio2e_zones
 from cardio2e_modules.cardio2e_config import AppConfig
 
@@ -101,3 +103,16 @@ class TestHandleBypassCommandLocking:
         assert acquired == [True]
         assert app_state.bypass_states[1] == "Y"
         assert mqtt.payload_for("cardio2e/zone/bypass/state/2") == "ON"
+
+
+class TestHandleBypassCommandRange:
+    @pytest.mark.parametrize("zone", [0, 17, -1])
+    def test_out_of_range_zone_is_rejected(self, serial_conn, mqtt, app_state, zone):
+        # 16 zones: anything else must be rejected, not raise (17+) or wrap
+        # around to another zone via a negative index (0, -1).
+        app_state.bypass_states = "N" * 16
+        cardio2e_zones.handle_bypass_command(
+            serial_conn, mqtt, f"cardio2e/zone/bypass/set/{zone}", "ON", app_state
+        )
+        assert serial_conn.written == []
+        assert app_state.bypass_states == "N" * 16

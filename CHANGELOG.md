@@ -11,9 +11,14 @@
 - `ha_discover_prefix` is now honoured by all autodiscovery topics (entities, error sensor and diagnostic entities). It was read from the config but every topic hard-coded `homeassistant/`. The default is unchanged.
 - The periodic sync no longer depends on name fetching. Known entity ids were derived from the fetched names, so with `fetch_*_names = false` the sync skipped every light, relay, HVAC and cover. Entities are now registered when they appear in the login dump (or, for covers, when their state is read), independently of names.
 - Temperatures are now included in the periodic sync. The sync iterated ids of type `T`, which never exist (names are stored under `H`); it now queries `@G T` for each known HVAC id.
+- An exception in an MQTT command handler no longer kills the paho network thread. paho re-raises callback exceptions, which stopped command reception and state publishing silently (the process stayed up, the broker eventually published the LWT "offline", and nothing reconnected). Handler errors are now logged with a traceback and counted in the diagnostics (`errors_count`, `last_error`).
+- Zone bypass commands validate the zone id (1..16). Out-of-range ids raised `IndexError`; zone 0 and negative ids silently toggled another zone through a negative list index.
+- Non-UTF-8 MQTT payloads are decoded with replacement characters and rejected by the handlers' payload validation, instead of raising `UnicodeDecodeError`.
+- paho's internal log is routed into the bridge's logger (`enable_logger`), so its own errors are no longer dropped.
 
 ### Other
 - Add `tests/test_main.py` covering the entry-point module (login failure handling, syslog setup).
+- Remove `docs/superpowers/` (local design notes) from the repository and ignore it.
 
 ## v2.3.5 - 2026-07-16
 

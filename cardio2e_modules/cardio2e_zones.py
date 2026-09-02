@@ -7,6 +7,9 @@ from .cardio2e_serial import send_command
 
 _LOGGER = logging.getLogger(__name__)
 
+# The controller reports bypass as a fixed-width string of 16 zones.
+NUM_ZONES = 16
+
 
 def interpret_zone_character(character, zone_id, zones_normal_as_off):
     """
@@ -53,6 +56,11 @@ def handle_bypass_command(serial_conn, mqtt_client, topic, payload, app_state):
     except ValueError:
         _LOGGER.error("Invalid zone ID on topic: %s", topic)
         return
+    if not 1 <= zone_id <= NUM_ZONES:
+        # Out of range would raise (IndexError) or, for 0 / negatives, silently
+        # wrap around and toggle another zone via a negative list index.
+        _LOGGER.error("Zone ID %d out of range (1..%d) on topic: %s", zone_id, NUM_ZONES, topic)
+        return
 
     payload = payload.upper()
 
@@ -62,9 +70,9 @@ def handle_bypass_command(serial_conn, mqtt_client, topic, payload, app_state):
     with app_state.lock:
         _LOGGER.info("Current Zones: %s", app_state.bypass_states)
 
-        if not app_state.bypass_states or len(app_state.bypass_states) != 16:
+        if not app_state.bypass_states or len(app_state.bypass_states) != NUM_ZONES:
             _LOGGER.error("Failed to get current state of zones. Using default state.")
-            app_state.bypass_states = "N" * 16
+            app_state.bypass_states = "N" * NUM_ZONES
 
         zone_bypass_states = list(app_state.bypass_states)
 
