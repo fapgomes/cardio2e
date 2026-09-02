@@ -108,3 +108,12 @@ class TestSyncAllEntities:
         cardio2e_listener._sync_all_entities(serial_conn, mqtt, AppConfig(), app_state)
         assert [eid for etype, eid in queried if etype == "T"] == [1, 3]
         assert [eid for etype, eid in queried if etype == "H"] == [1, 3]
+
+
+class TestGetEntityStateHvac:
+    def test_unknown_mode_code_uses_lowercase_fallback(self, mqtt, serial_conn, app_state):
+        # Must match process_update's fallback ("unknown"), otherwise the same
+        # HVAC publishes two different spellings depending on the code path.
+        serial_conn.feed(b"@I H 2 18.0 20.0 S X\r")
+        cardio2e_listener._get_entity_state(serial_conn, mqtt, 2, "H", AppConfig(), app_state)
+        assert mqtt.payload_for("cardio2e/hvac/2/state/mode") == "unknown"

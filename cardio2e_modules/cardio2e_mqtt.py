@@ -1,7 +1,6 @@
 """MQTT setup, LWT, and message routing for cardio2e."""
 
 import logging
-import time
 
 import paho.mqtt.client as mqtt
 

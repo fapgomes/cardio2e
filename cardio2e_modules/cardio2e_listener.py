@@ -361,7 +361,7 @@ def _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, 
             "heating_setpoint": message_parts[3],
             "cooling_setpoint": message_parts[4],
             "fan": FAN_CODE_TO_STATE.get(message_parts[5], "off"),
-            "mode": HVAC_CODE_TO_MODE.get(message_parts[6], "Unknown"),
+            "mode": HVAC_CODE_TO_MODE.get(message_parts[6], "unknown"),
         }
         with app_state.lock:
             hvac_states = app_state.hvac_states

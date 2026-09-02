@@ -1,6 +1,7 @@
 """Light entity logic for cardio2e."""
 
 import logging
+import re
 
 from .cardio2e_serial import send_command
 
@@ -53,7 +54,6 @@ def process_update(mqtt_client, message_parts, config, app_state):
 
 def process_login(mqtt_client, message, serial_conn, config, app_state, get_name_fn):
     """Process @I L messages from the login response."""
-    import re
     match = re.match(r"@I L (\d+) (\d+)", message)
     if match:
         light_id, light_state = match.groups()

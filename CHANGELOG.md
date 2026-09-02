@@ -19,6 +19,7 @@
 ### Other
 - Add `tests/test_main.py` covering the entry-point module (login failure handling, syslog setup).
 - Remove `docs/superpowers/` (local design notes) from the repository and ignore it.
+- HVAC mode/temperature-status fallback is consistently `unknown` (one code path published `Unknown`). Remove unused imports; move function-local imports (`query_name`, `re`) to module level.
 
 ## v2.3.5 - 2026-07-16
 

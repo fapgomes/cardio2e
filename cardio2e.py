@@ -5,14 +5,12 @@ import logging.handlers
 import os
 import signal
 import threading
-import time
 
 import serial
 
 from cardio2e_modules.cardio2e_config import load_config, AppState
-from cardio2e_modules.cardio2e_constants import AVAILABILITY_TOPIC, PAYLOAD_NOT_AVAILABLE
-from cardio2e_modules.cardio2e_mqtt import create_mqtt_client, publish_available, publish_not_available, subscribe_after_init
-from cardio2e_modules.cardio2e_serial import login, logout
+from cardio2e_modules.cardio2e_mqtt import create_mqtt_client, publish_not_available, subscribe_after_init
+from cardio2e_modules.cardio2e_serial import login, logout, query_name
 from cardio2e_modules.cardio2e_listener import listen_for_updates, _get_entity_state
 from cardio2e_modules.cardio2e_autodiscovery import publish_config as publish_autodiscovery_config
 from cardio2e_modules import cardio2e_errors, cardio2e_covers, cardio2e_lights, cardio2e_switches, cardio2e_security, cardio2e_hvac, cardio2e_zones, cardio2e_scenarios
@@ -36,8 +34,6 @@ def _setup_syslog(address, port):
 
 def get_name(serial_conn, entity_id, entity_type, mqtt_client, config, app_state):
     """Query and publish entity name, then publish autodiscovery config."""
-    from cardio2e_modules.cardio2e_serial import query_name
-
     if entity_type == "S":
         entity_name = f"Security {entity_id}"
         app_state.set_entity_name(entity_type, entity_id, entity_name)

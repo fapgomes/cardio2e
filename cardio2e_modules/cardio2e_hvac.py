@@ -143,7 +143,7 @@ def process_temp_update(mqtt_client, message_parts, app_state):
     match = re.match(r"@I T (\d+) (-?\d+\.?\d*) ([HCO])", " ".join(message_parts) if isinstance(message_parts, list) else message_parts)
     if match:
         temp_sensor_id, temp_value, temp_status = match.groups()
-        temp_status_value = TEMP_CODE_TO_STATUS.get(temp_status, "Unknown")
+        temp_status_value = TEMP_CODE_TO_STATUS.get(temp_status, "unknown")
         with app_state.lock:
             hvac_states = app_state.hvac_states
             hvac_states = update_hvac_state(mqtt_client, hvac_states, int(temp_sensor_id), "current_temperature", temp_value)
@@ -159,7 +159,7 @@ def process_login(mqtt_client, message, serial_conn, config, app_state, get_name
         hvac_id, heating_setpoint, cooling_setpoint, fan_state, system_mode = match.groups()
         app_state.register_entity("H", hvac_id)
         fan_state_value = FAN_CODE_TO_STATE.get(fan_state, "off")
-        hvac_state = HVAC_CODE_TO_MODE.get(system_mode, "Unknown")
+        hvac_state = HVAC_CODE_TO_MODE.get(system_mode, "unknown")
 
         with app_state.lock:
             hvac_states = app_state.hvac_states
