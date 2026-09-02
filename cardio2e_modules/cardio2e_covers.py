@@ -77,7 +77,28 @@ def handle_command(serial_conn, mqtt_client, topic, payload, get_entity_state_fn
 
 
 def _stop_cover(serial_conn, mqtt_client, cover_id, get_entity_state_fn):
-    """Stop a cover by querying its actual position and re-sending it."""
+    """Emulate STOP for a moving cover.
+
+    The Secant protocol has no STOP transaction for curtains (only ``@S C o d``
+    to set a level, ``@G C o`` to read it and ``@I C o d`` as reply/broadcast).
+    What the controller does have is this property: any ``@S C`` received
+    while the cover is moving makes it stop. So:
+
+    1. ``@G C`` reads the position the controller reports mid-travel (and
+       publishes it to MQTT).
+    2. ``@S C`` with that same position is the command that actually stops the
+       motor. The controller then acks (``@A C``) and broadcasts the final
+       position (``@I C o d``), which the serial reader dispatches to
+       ``process_update`` — that is what leaves MQTT with the real resting
+       position.
+
+    If the read fails, any value works as a stop command, hence the dummy 50.
+
+    Note the periodic sync deliberately does NOT use ``@G C``: on a cover that
+    is standing still it makes the controller re-issue the position command to
+    the motor, so idle covers are republished from the cached state instead.
+    That caveat does not apply here, where the cover is already moving.
+    """
     try:
         # Query actual position first (serial lock prevents listener contention)
         position = get_entity_state_fn(serial_conn, mqtt_client, cover_id, "C")
@@ -85,7 +106,7 @@ def _stop_cover(serial_conn, mqtt_client, cover_id, get_entity_state_fn):
             send_command(serial_conn, "C", cover_id, position)
             _LOGGER.info("Cover %d stopped at position: %s", cover_id, position)
         else:
-            # Fallback: send dummy position to at least trigger a stop
+            # Fallback: any @S C stops a moving cover, so send a dummy position
             send_command(serial_conn, "C", cover_id, 50)
             _LOGGER.warning("Cover %d: could not query position, sent dummy 50 to stop.", cover_id)
     except Exception as e:
