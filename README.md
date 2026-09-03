@@ -161,3 +161,9 @@ Run the test suite (no hardware or broker required — it uses fakes):
 pip install -r requirements-dev.txt   # or: sudo apt-get install python3-pytest
 python3 -m pytest
 ```
+
+## Support the project
+
+If this project is useful to you, consider buying me a coffee to help keep it going:
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-fapgomes-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/fapgomes)
