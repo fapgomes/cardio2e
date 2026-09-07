@@ -34,6 +34,12 @@ autodiscovery — no manual YAML is required.
   periodically, publishes a heartbeat + diagnostics, and runs a periodic
   re-sync of all known entities to keep Home Assistant aligned with the
   controller.
+- **Lost commands are recovered.** The controller mirrors physical key presses
+  onto the RS-232 output and can splice them into the middle of another frame,
+  garbling a command sent at that instant. A light or switch command that gets
+  no `@A` ack within 1s is re-sent once (their commands set an absolute state,
+  so a duplicate is harmless; covers, scenes and the alarm are never retried).
+  An ack not followed by an `@I` state update triggers a state re-query.
 - On startup the bridge logs in, parses the controller's initial state dump, and
   initializes covers and scenarios before subscribing to command topics.
 - The serial connection auto-reconnects with exponential backoff. The MQTT

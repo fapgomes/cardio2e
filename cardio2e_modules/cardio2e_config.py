@@ -85,6 +85,7 @@ class AppState(object):
         self._entity_states = {}  # {(entity_type, entity_id): last_known_state}
         self._entity_update_times = {}  # {(entity_type, entity_id): monotonic time of last @I}
         self._pending_ack_checks = {}  # {(entity_type, entity_id): (ack_time, due_at)}
+        self._pending_command_retries = {}  # {(entity_type, entity_id): (value, sent_at)}
         # Diagnostics counters (atomic increments via lock)
         self._messages_processed = 0
         self._errors_count = 0
@@ -224,6 +225,31 @@ class AppState(object):
             ]
             for etype, eid, _ in due:
                 del self._pending_ack_checks[(etype, eid)]
+            return due
+
+    def schedule_command_retry(self, entity_type, entity_id, value, sent_at):
+        """Remember a sent @S command so it can be re-sent once if no @A ack
+        follows it. A newer command for the same entity replaces the pending
+        one (latest value wins)."""
+        with self._lock:
+            self._pending_command_retries[(entity_type, int(entity_id))] = (value, sent_at)
+
+    def clear_command_retry(self, entity_type, entity_id):
+        """Drop the pending retry of an entity: its @A ack arrived."""
+        with self._lock:
+            self._pending_command_retries.pop((entity_type, int(entity_id)), None)
+
+    def pop_due_command_retries(self, now, timeout):
+        """Remove and return the commands sent at least `timeout` seconds
+        before `now` as a list of (entity_type, entity_id, value) tuples."""
+        with self._lock:
+            due = [
+                (etype, eid, value)
+                for (etype, eid), (value, sent_at) in self._pending_command_retries.items()
+                if sent_at + timeout <= now
+            ]
+            for etype, eid, _ in due:
+                del self._pending_command_retries[(etype, eid)]
             return due
 
     @property

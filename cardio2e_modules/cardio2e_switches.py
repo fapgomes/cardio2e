@@ -2,6 +2,7 @@
 
 import logging
 import re
+import time
 
 from .cardio2e_constants import SWITCH_CODE_TO_STATE
 from .cardio2e_serial import send_command
@@ -9,8 +10,11 @@ from .cardio2e_serial import send_command
 _LOGGER = logging.getLogger(__name__)
 
 
-def handle_set_command(serial_conn, topic, payload):
-    """Handle an MQTT set command for a switch."""
+def handle_set_command(serial_conn, topic, payload, app_state=None):
+    """Handle an MQTT set command for a switch.
+
+    When ``app_state`` is given, the command is queued for a single re-send
+    if the controller does not ack it (see ``cardio2e_listener``)."""
     try:
         switch_id = int(topic.split("/")[-1])
     except ValueError:
@@ -28,6 +32,8 @@ def handle_set_command(serial_conn, topic, payload):
         return
 
     send_command(serial_conn, "R", switch_id, command)
+    if app_state is not None:
+        app_state.schedule_command_retry("R", switch_id, command, time.monotonic())
 
 
 def process_update(mqtt_client, message_parts, app_state):

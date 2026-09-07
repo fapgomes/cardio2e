@@ -5,7 +5,7 @@ import json
 import logging
 import time
 
-from .cardio2e_serial import send_date, query_state, SerialReader, reader_active, pending_count
+from .cardio2e_serial import send_date, send_command, query_state, SerialReader, reader_active, pending_count
 from . import (
     cardio2e_errors,
     cardio2e_lights,
@@ -32,7 +32,35 @@ HEARTBEAT_INTERVAL = 30  # seconds
 # If it doesn't arrive (lost/corrupted on the wire), the state is re-queried.
 ACK_FOLLOWUP_DELAY = 2.0  # seconds
 
+# Time allowed for the @A ack of an @S command. The controller normally acks
+# within 0.2s; a command still unacked after this is considered lost on the
+# wire and re-sent once (see _run_due_command_retries).
+COMMAND_ACK_TIMEOUT = 1.0  # seconds
+
 _LOGGER = logging.getLogger(__name__)
+
+
+def _run_due_command_retries(serial_conn, app_state, now=None):
+    """Re-send, once, every light/relay @S command whose @A ack did not
+    arrive within ``COMMAND_ACK_TIMEOUT``.
+
+    The Cardio2e mirrors physical key presses onto its RS-232 output and
+    sometimes splices that ``@S`` echo into the middle of another frame. A
+    command of ours sent during such a burst is garbled and never acked, so
+    the requested action silently does not happen. Only lights (L) and
+    relays (R) are retried: their commands set an absolute state, so a
+    duplicate is harmless. Covers (any ``@S C`` stops a moving cover),
+    scenes and security are never retried. The retry itself is not tracked,
+    so a command is sent at most twice.
+    """
+    if now is None:
+        now = time.monotonic()
+    for entity_type, entity_id, value in app_state.pop_due_command_retries(now, COMMAND_ACK_TIMEOUT):
+        _LOGGER.warning(
+            "No @A ack within %.1fs of @S %s %d %s; re-sending once.",
+            COMMAND_ACK_TIMEOUT, entity_type, entity_id, value,
+        )
+        send_command(serial_conn, entity_type, entity_id, value)
 
 
 def _schedule_ack_verification(app_state, entity_type, entity_id):
@@ -238,6 +266,9 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state, shutdown_eve
                 _LOGGER.info("Sent time command to cardio2e: %s", time_command)
                 last_time_sent = now
 
+            # Re-send light/relay commands that got no @A ack
+            _run_due_command_retries(serial_conn, app_state, now)
+
             # Re-query entities whose @A ack was not followed by an @I update
             _run_due_ack_verifications(serial_conn, mqtt_client, config, app_state, now)
 
@@ -278,9 +309,11 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
 
         if entity_type == "L":
             _LOGGER.info("OK for action %s", app_state.get_entity_label("light", "L", entity_id))
+            app_state.clear_command_retry("L", entity_id)
             _schedule_ack_verification(app_state, "L", entity_id)
         elif entity_type == "R":
             _LOGGER.info("OK for action %s", app_state.get_entity_label("switch", "R", entity_id))
+            app_state.clear_command_retry("R", entity_id)
             _schedule_ack_verification(app_state, "R", entity_id)
         elif entity_type == "C":
             _LOGGER.info("OK for action %s", app_state.get_entity_label("cover", "C", entity_id))

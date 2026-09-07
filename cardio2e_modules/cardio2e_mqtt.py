@@ -205,10 +205,10 @@ def _route_message(client, userdata, msg):
     app_state.set_last_command(f"{topic} {recorded_payload}")
 
     if topic.startswith("cardio2e/light/set/"):
-        cardio2e_lights.handle_set_command(serial_conn, topic, payload)
+        cardio2e_lights.handle_set_command(serial_conn, topic, payload, app_state)
 
     elif topic.startswith("cardio2e/switch/set/"):
-        cardio2e_switches.handle_set_command(serial_conn, topic, payload)
+        cardio2e_switches.handle_set_command(serial_conn, topic, payload, app_state)
 
     elif topic.startswith("cardio2e/cover/set/"):
         cardio2e_covers.handle_set_position(serial_conn, topic, payload)
