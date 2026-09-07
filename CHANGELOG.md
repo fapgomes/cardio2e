@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.4.1 - 2026-09-07
+
+### Fixes
+- Re-send light/relay commands that get no `@A` ack. The controller mirrors physical key presses onto its RS-232 output as zero-padded `@S` frames and sometimes splices them into the middle of another frame; a command of ours sent at that instant is garbled and never acked, so the action silently does not happen (seen in production as `@S L 18 100` answered by `@N L 290120`, light left off). Light and relay `@S` commands still unacked after 1s are now re-sent once by the housekeeping loop (the controller normally acks within 0.2s). Their commands set an absolute state, so a duplicate is harmless; covers (any `@S C` stops a moving cover), scenes, security and the date sync are never retried. `@N` errors are still reported to Home Assistant.
+
 ## v2.4.0 - 2026-09-02
 
 ### Fixes
