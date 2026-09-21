@@ -41,17 +41,18 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _run_due_command_retries(serial_conn, app_state, now=None):
-    """Re-send, once, every light/relay @S command whose @A ack did not
+    """Re-send, once, every light/relay/HVAC @S command whose @A ack did not
     arrive within ``COMMAND_ACK_TIMEOUT``.
 
     The Cardio2e mirrors physical key presses onto its RS-232 output and
     sometimes splices that ``@S`` echo into the middle of another frame. A
     command of ours sent during such a burst is garbled and never acked, so
-    the requested action silently does not happen. Only lights (L) and
-    relays (R) are retried: their commands set an absolute state, so a
+    the requested action silently does not happen. Only lights (L), relays
+    (R) and HVAC (H) are retried: their commands set an absolute state, so a
     duplicate is harmless. Covers (any ``@S C`` stops a moving cover),
     scenes and security are never retried. The retry itself is not tracked,
-    so a command is sent at most twice.
+    so a command is sent at most twice. An HVAC command is stored as the
+    keyword arguments of ``send_command`` (setpoints, fan, mode).
     """
     if now is None:
         now = time.monotonic()
@@ -60,7 +61,10 @@ def _run_due_command_retries(serial_conn, app_state, now=None):
             "No @A ack within %.1fs of @S %s %d %s; re-sending once.",
             COMMAND_ACK_TIMEOUT, entity_type, entity_id, value,
         )
-        send_command(serial_conn, entity_type, entity_id, value)
+        if entity_type == "H":
+            send_command(serial_conn, entity_type, entity_id, **value)
+        else:
+            send_command(serial_conn, entity_type, entity_id, value)
 
 
 def _schedule_ack_verification(app_state, entity_type, entity_id):
@@ -71,12 +75,32 @@ def _schedule_ack_verification(app_state, entity_type, entity_id):
     lost or corrupted on the RS-232 line, the published state goes stale until
     the next periodic sync (hours). The check is queued in ``AppState`` and
     run by the housekeeping loop (see ``_run_due_ack_verifications``), so a
-    burst of acks costs no threads. Only lights (L) and relays (R) are
-    verified: ``@G C`` makes the controller re-drive the cover motor, so
+    burst of acks costs no threads. Only lights (L), relays (R) and HVAC (H)
+    are verified: ``@G C`` makes the controller re-drive the cover motor, so
     covers must never be re-queried.
     """
     now = time.monotonic()
     app_state.schedule_ack_check(entity_type, entity_id, now, now + ACK_FOLLOWUP_DELAY)
+
+
+def _schedule_nack_verification(app_state, entity_type, entity_id):
+    """Queue a state re-query for an entity whose @S command got a @N.
+
+    A NACK to one of our commands means the frame reached the controller
+    garbled and nothing happened. HVAC state is published optimistically when
+    the command is sent, so Home Assistant would keep showing the new value
+    while the controller kept the old one. The check is due only after the
+    single retry has had time to be acked and followed by its @I
+    (``COMMAND_ACK_TIMEOUT`` + ``ACK_FOLLOWUP_DELAY``): if the retry went
+    through there is nothing to fix and nothing is queried. Same L/R/H scope
+    as the ack verification; covers are never re-queried.
+    """
+    if entity_type not in ("L", "R", "H"):
+        return
+    now = time.monotonic()
+    app_state.schedule_ack_check(
+        entity_type, entity_id, now, now + COMMAND_ACK_TIMEOUT + ACK_FOLLOWUP_DELAY
+    )
 
 
 def _run_due_ack_verifications(serial_conn, mqtt_client, config, app_state, now=None):
@@ -89,8 +113,8 @@ def _run_due_ack_verifications(serial_conn, mqtt_client, config, app_state, now=
         if last_update is not None and last_update >= ack_time:
             continue
         _LOGGER.warning(
-            "No @I update within %.1fs of @A %s %d ack; re-querying state.",
-            ACK_FOLLOWUP_DELAY, entity_type, entity_id,
+            "No @I update for %s %d after its @S command was answered; re-querying state.",
+            entity_type, entity_id,
         )
         state = _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, app_state)
         _LOGGER.info("Re-queried state for %s %d: %s", entity_type, entity_id, state)
@@ -315,6 +339,10 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
             _LOGGER.info("OK for action %s", app_state.get_entity_label("switch", "R", entity_id))
             app_state.clear_command_retry("R", entity_id)
             _schedule_ack_verification(app_state, "R", entity_id)
+        elif entity_type == "H":
+            _LOGGER.info("OK for action %s", app_state.get_entity_label("HVAC", "H", entity_id))
+            app_state.clear_command_retry("H", entity_id)
+            _schedule_ack_verification(app_state, "H", entity_id)
         elif entity_type == "C":
             _LOGGER.info("OK for action %s", app_state.get_entity_label("cover", "C", entity_id))
         elif entity_type == "S":
@@ -334,6 +362,10 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
         app_state.increment_errors()
         app_state.set_last_error(error_msg)
         _LOGGER.info("\n#######\nNACK from cardio with transaction %s: %s", msg, error_msg)
+        # "@N <type> <id> <code>" identifies the rejected entity; a truncated
+        # "@N <type> <code>" (id lost to garbling) identifies nothing.
+        if len(message_parts) >= 4 and message_parts[2].isdigit():
+            _schedule_nack_verification(app_state, message_parts[1], int(message_parts[2]))
 
     # Info/state update messages (@I)
     elif len(message_parts) >= 4 and message_parts[0] == "@I":
@@ -348,6 +380,7 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
         elif entity_type == "C":
             cardio2e_covers.process_update(mqtt_client, message_parts, app_state)
         elif entity_type == "H":
+            app_state.record_entity_update("H", int(message_parts[2]))
             cardio2e_hvac.process_update(mqtt_client, message_parts, app_state)
         elif entity_type == "T":
             cardio2e_hvac.process_temp_update(mqtt_client, message_parts, app_state)
@@ -358,9 +391,11 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
         elif entity_type == "B":
             cardio2e_zones.process_bypass_update(mqtt_client, message_parts, app_state)
         else:
-            _LOGGER.error("Response not processed: %s", message_parts)
+            _LOGGER.warning("Response not processed: %s", message_parts)
     else:
-        _LOGGER.error("Response not processed: %s", message_parts)
+        # Typically a fragment of a frame garbled on the wire (e.g. "@CCCC",
+        # "@O"): expected noise from the controller, not a bridge failure.
+        _LOGGER.warning("Response not processed: %s", message_parts)
 
 
 def _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, app_state):

@@ -11,8 +11,14 @@ import time
 
 import pytest
 
-from cardio2e_modules import cardio2e_listener, cardio2e_lights, cardio2e_switches
+from cardio2e_modules import cardio2e_hvac, cardio2e_listener, cardio2e_lights, cardio2e_switches
 from cardio2e_modules.cardio2e_config import AppConfig
+
+
+def _init_hvac(app_state, hvac_id=2):
+    app_state.hvac_states = {
+        hvac_id: {"heating_setpoint": 18.0, "cooling_setpoint": 20.0, "fan": "off", "mode": "heat"}
+    }
 
 
 def _wait_for(predicate, timeout=3.0, interval=0.02):
@@ -56,6 +62,24 @@ class TestCommandRetry:
         cardio2e_switches.handle_set_command(serial_conn, "cardio2e/switch/set/3", "OFF", app_state)
         self._run_due(serial_conn, app_state)
         assert serial_conn.written_str() == ["@S R 3 C\r", "@S R 3 C\r"]
+
+    def test_hvac_command_without_ack_is_resent_once(self, mqtt, serial_conn, app_state):
+        # Seen in production (2026-09-19): "@S H 1 5.0 7.0 S O" garbled on the
+        # wire into "@S H 1 5.0 C7.C0C S", answered by "@N H 1 3", never acked.
+        _init_hvac(app_state)
+        cardio2e_hvac.handle_set_command(serial_conn, mqtt, "cardio2e/hvac/2/set/mode", "off", app_state)
+        assert serial_conn.written_str() == ["@S H 2 18.0 20.0 S O\r"]
+        self._run_due(serial_conn, app_state)
+        assert serial_conn.written_str() == ["@S H 2 18.0 20.0 S O\r", "@S H 2 18.0 20.0 S O\r"]
+        self._run_due(serial_conn, app_state)
+        assert len(serial_conn.written) == 2
+
+    def test_acked_hvac_command_is_not_resent(self, mqtt, serial_conn, app_state):
+        _init_hvac(app_state)
+        cardio2e_hvac.handle_set_command(serial_conn, mqtt, "cardio2e/hvac/2/set/mode", "off", app_state)
+        self._ack(serial_conn, mqtt, app_state, "H", 2)
+        self._run_due(serial_conn, app_state)
+        assert len(serial_conn.written) == 1
 
     def test_acked_command_is_not_resent(self, mqtt, serial_conn, app_state):
         cardio2e_lights.handle_set_command(serial_conn, "cardio2e/light/set/18", "ON", app_state)

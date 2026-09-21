@@ -36,10 +36,13 @@ autodiscovery — no manual YAML is required.
   controller.
 - **Lost commands are recovered.** The controller mirrors physical key presses
   onto the RS-232 output and can splice them into the middle of another frame,
-  garbling a command sent at that instant. A light or switch command that gets
-  no `@A` ack within 1s is re-sent once (their commands set an absolute state,
-  so a duplicate is harmless; covers, scenes and the alarm are never retried).
-  An ack not followed by an `@I` state update triggers a state re-query.
+  garbling a command sent at that instant. A light, switch or HVAC command
+  that gets no `@A` ack within 1s is re-sent once (their commands set an
+  absolute state, so a duplicate is harmless; covers, scenes and the alarm are
+  never retried). An ack not followed by an `@I` state update triggers a state
+  re-query, and so does a `@N` rejection of a light, switch or HVAC command
+  once the retry window has passed, so Home Assistant never keeps a value the
+  controller refused.
 - On startup the bridge logs in, parses the controller's initial state dump, and
   initializes covers and scenarios before subscribing to command topics.
 - The serial connection auto-reconnects with exponential backoff. The MQTT

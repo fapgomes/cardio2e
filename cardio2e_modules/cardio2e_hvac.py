@@ -2,6 +2,7 @@
 
 import logging
 import re
+import time
 from .cardio2e_constants import (
     HVAC_CODE_TO_MODE,
     FAN_CODE_TO_STATE,
@@ -77,15 +78,17 @@ def handle_set_command(serial_conn, mqtt_client, topic, payload, app_state):
 
             app_state.hvac_states = hvac_states
 
-        send_command(
-            serial_conn=serial_conn,
-            entity_type="H",
-            entity_id_or_value=hvac_id,
-            heating_setpoint=heating_setpoint,
-            cooling_setpoint=cooling_setpoint,
-            fan_state=fan_state,
-            mode=mode,
-        )
+        command = {
+            "heating_setpoint": heating_setpoint,
+            "cooling_setpoint": cooling_setpoint,
+            "fan_state": fan_state,
+            "mode": mode,
+        }
+        send_command(serial_conn, "H", hvac_id, **command)
+        # Re-sent once by the housekeeping loop if the controller never acks
+        # it (frame garbled on the wire). The command sets every parameter
+        # of the zone, so a duplicate is harmless.
+        app_state.schedule_command_retry("H", hvac_id, command, time.monotonic())
 
         with app_state.lock:
             hvac_states = app_state.hvac_states

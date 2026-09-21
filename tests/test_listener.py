@@ -1,5 +1,6 @@
 """Tests for the listener housekeeping loop lifecycle."""
 
+import logging
 import threading
 import time
 
@@ -92,6 +93,22 @@ class TestAckWithoutUpdateRequery:
         self._run_due(serial_conn, mqtt, app_state)
         assert "@G L 13\r" in serial_conn.written_str()
 
+    def test_hvac_ack_without_update_requeries_state(self, mqtt, serial_conn, app_state):
+        serial_conn.feed(b"@I H 2 18.0 20.0 S O\r")
+        self._ack(serial_conn, mqtt, app_state, "H", 2)
+        self._run_due(serial_conn, mqtt, app_state)
+        assert serial_conn.written_str() == ["@G H 2\r"]
+        assert mqtt.payload_for("cardio2e/hvac/2/state/mode") == "off"
+
+    def test_hvac_ack_followed_by_update_does_not_requery(self, mqtt, serial_conn, app_state):
+        self._ack(serial_conn, mqtt, app_state, "H", 2)
+        cardio2e_listener._dispatch_message(
+            serial_conn, mqtt, AppConfig(), app_state,
+            "@I H 2 18.0 20.0 S O", ["@I", "H", "2", "18.0", "20.0", "S", "O"],
+        )
+        self._run_due(serial_conn, mqtt, app_state)
+        assert serial_conn.written == []
+
     def test_cover_ack_never_requeries(self, mqtt, serial_conn, app_state):
         # @G C makes the controller re-drive the motor, so covers are excluded.
         self._ack(serial_conn, mqtt, app_state, "C", 7)
@@ -169,3 +186,87 @@ class TestGetEntityStateHvac:
         serial_conn.feed(b"@I H 2 18.0 20.0 S X\r")
         cardio2e_listener._get_entity_state(serial_conn, mqtt, 2, "H", AppConfig(), app_state)
         assert mqtt.payload_for("cardio2e/hvac/2/state/mode") == "unknown"
+
+
+class TestNackRequery:
+    """A ``@N <type> <id> <code>`` answer to one of our ``@S`` commands means
+    the controller rejected it (in practice: the frame was garbled on the
+    wire). HVAC state is published optimistically when the command is sent,
+    so Home Assistant would show the new value while the controller kept the
+    old one. The entity's state is re-queried, but only after the retry
+    window: if the re-sent command is acked and followed by an ``@I`` there is
+    nothing to fix. Covers are never re-queried (``@G C`` drives the motor);
+    a truncated NACK (no id) identifies nothing and re-queries nothing."""
+
+    @pytest.fixture(autouse=True)
+    def _fast_timeouts(self, monkeypatch):
+        monkeypatch.setattr(cardio2e_listener, "ACK_FOLLOWUP_DELAY", 0.05, raising=False)
+        monkeypatch.setattr(cardio2e_listener, "COMMAND_ACK_TIMEOUT", 0.05, raising=False)
+
+    @staticmethod
+    def _nack(serial_conn, mqtt, app_state, msg):
+        cardio2e_listener._dispatch_message(serial_conn, mqtt, AppConfig(), app_state, msg, msg.split())
+
+    @staticmethod
+    def _run_due(serial_conn, mqtt, app_state, late=True):
+        now = time.monotonic()
+        if late:
+            now += cardio2e_listener.COMMAND_ACK_TIMEOUT + cardio2e_listener.ACK_FOLLOWUP_DELAY
+        cardio2e_listener._run_due_ack_verifications(serial_conn, mqtt, AppConfig(), app_state, now=now)
+
+    def test_hvac_nack_without_update_requeries_state(self, mqtt, serial_conn, app_state):
+        serial_conn.feed(b"@I H 1 5.0 7.0 S C\r")
+        self._nack(serial_conn, mqtt, app_state, "@N H 1 3")
+        self._run_due(serial_conn, mqtt, app_state)
+        assert serial_conn.written_str() == ["@G H 1\r"]
+        assert mqtt.payload_for("cardio2e/hvac/1/state/mode") == "cool"
+
+    def test_light_nack_without_update_requeries_state(self, mqtt, serial_conn, app_state):
+        serial_conn.feed(b"@I L 18 0\r")
+        self._nack(serial_conn, mqtt, app_state, "@N L 18 3")
+        self._run_due(serial_conn, mqtt, app_state)
+        assert serial_conn.written_str() == ["@G L 18\r"]
+
+    def test_nack_requery_waits_for_the_retry_window(self, mqtt, serial_conn, app_state):
+        self._nack(serial_conn, mqtt, app_state, "@N H 1 3")
+        cardio2e_listener._run_due_ack_verifications(
+            serial_conn, mqtt, AppConfig(), app_state,
+            now=time.monotonic() + cardio2e_listener.ACK_FOLLOWUP_DELAY,
+        )
+        assert serial_conn.written == []
+
+    def test_nack_followed_by_update_does_not_requery(self, mqtt, serial_conn, app_state):
+        # The retried command went through: @A + @I arrived, state is right.
+        self._nack(serial_conn, mqtt, app_state, "@N H 1 3")
+        cardio2e_listener._dispatch_message(
+            serial_conn, mqtt, AppConfig(), app_state,
+            "@I H 1 5.0 7.0 S O", ["@I", "H", "1", "5.0", "7.0", "S", "O"],
+        )
+        self._run_due(serial_conn, mqtt, app_state)
+        assert serial_conn.written == []
+
+    def test_cover_nack_never_requeries(self, mqtt, serial_conn, app_state):
+        self._nack(serial_conn, mqtt, app_state, "@N C 1 3")
+        self._run_due(serial_conn, mqtt, app_state)
+        assert serial_conn.written == []
+
+    def test_truncated_nack_requeries_nothing(self, mqtt, serial_conn, app_state):
+        # Seen in production (2026-09-21): "@N L 2", the id lost to garbling.
+        self._nack(serial_conn, mqtt, app_state, "@N L 2")
+        self._run_due(serial_conn, mqtt, app_state)
+        assert serial_conn.written == []
+
+    def test_nack_is_still_reported_as_an_error(self, mqtt, serial_conn, app_state):
+        self._nack(serial_conn, mqtt, app_state, "@N H 1 3")
+        assert app_state.get_diagnostics()["errors_count"] == 1
+
+
+class TestGarbledFragmentLogLevel:
+    """Fragments of a frame garbled on the wire (``@CCCC``, ``@O``...) are
+    expected noise, not a bridge failure: they are logged as WARNING."""
+
+    def test_unparseable_fragment_is_a_warning_not_an_error(self, mqtt, serial_conn, app_state, caplog):
+        with caplog.at_level(logging.WARNING, logger="cardio2e_modules.cardio2e_listener"):
+            cardio2e_listener._dispatch_message(serial_conn, mqtt, AppConfig(), app_state, "@CCCC", ["@CCCC"])
+        assert [r.levelno for r in caplog.records] == [logging.WARNING]
+        assert "@CCCC" in caplog.records[0].getMessage()
