@@ -1,0 +1,68 @@
+# On every vX.Y.Z tag, bump the Home Assistant add-on (fapgomes/hassio-cardio2e)
+# to pull this release: patch bump in config.yaml, CARDIO2E_VERSION pin in
+# build.yaml and a CHANGELOG.md entry copied from this repo's CHANGELOG.md.
+# Home Assistant then shows the add-on update through its native mechanism.
+#
+# Requires the ADDON_DEPLOY_KEY secret: the private half of an SSH deploy
+# key registered with write access on fapgomes/hassio-cardio2e.
+
+name: Bump Home Assistant add-on
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to pull into the add-on (e.g. v2.4.2)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Check out cardio2e at the release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+          path: cardio2e
+
+      - name: Check out hassio-cardio2e
+        uses: actions/checkout@v7
+        with:
+          repository: fapgomes/hassio-cardio2e
+          ssh-key: ${{ secrets.ADDON_DEPLOY_KEY }}
+          path: addon
+
+      - name: Bump add-on files
+        id: bump
+        shell: bash
+        run: |
+          set +e
+          out=$(python3 cardio2e/.github/scripts/bump_addon.py "$TAG" cardio2e addon/cardio2e)
+          rc=$?
+          set -e
+          case "$rc" in
+            0) echo "$out" >> "$GITHUB_OUTPUT" ;;
+            3) echo "skipped=true" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$rc" ;;
+          esac
+
+      - name: Commit and push to hassio-cardio2e
+        if: steps.bump.outputs.skipped != 'true'
+        working-directory: addon
+        shell: bash
+        env:
+          ADDON_VERSION: ${{ steps.bump.outputs.addon_version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cardio2e/config.yaml cardio2e/build.yaml cardio2e/CHANGELOG.md
+          git commit -m "chore: pull cardio2e ${TAG}, bump ${ADDON_VERSION}"
+          git push origin HEAD:main
