@@ -27,6 +27,13 @@ jobs:
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
     steps:
+      # The script comes from the ref that triggered the workflow (main on a
+      # manual run), the changelog and VERSION from the release tag itself.
+      - name: Check out cardio2e (workflow ref, for the script)
+        uses: actions/checkout@v7
+        with:
+          path: tools
+
       - name: Check out cardio2e at the release tag
         uses: actions/checkout@v7
         with:
@@ -45,7 +52,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          out=$(python3 cardio2e/.github/scripts/bump_addon.py "$TAG" cardio2e addon/cardio2e)
+          out=$(python3 tools/.github/scripts/bump_addon.py "$TAG" cardio2e addon/cardio2e)
           rc=$?
           set -e
           case "$rc" in
