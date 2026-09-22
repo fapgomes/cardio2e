@@ -109,20 +109,24 @@ class TestFileEdits:
         with pytest.raises(ValueError):
             bump_addon.update_config_version("name: x\n", "1.0.18")
 
-    def test_update_build_arg_replaces_tag(self):
-        text = "build_from:\n  amd64: img\nargs:\n  CARDIO2E_VERSION: v2.4.1\n"
-        assert bump_addon.update_build_arg(text, "v2.4.2") == (
-            "build_from:\n  amd64: img\nargs:\n  CARDIO2E_VERSION: v2.4.2\n"
+    def test_update_dockerfile_arg_replaces_tag(self):
+        text = 'FROM img\n\nARG CARDIO2E_VERSION="v2.4.1"\n\nRUN true\n'
+        assert bump_addon.update_dockerfile_arg(text, "v2.4.2") == (
+            'FROM img\n\nARG CARDIO2E_VERSION="v2.4.2"\n\nRUN true\n'
         )
 
-    def test_update_build_arg_same_tag_raises(self):
-        text = "args:\n  CARDIO2E_VERSION: v2.4.2\n"
+    def test_update_dockerfile_arg_same_tag_raises(self):
+        text = 'ARG CARDIO2E_VERSION="v2.4.2"\n'
         with pytest.raises(bump_addon.AlreadyPinned):
-            bump_addon.update_build_arg(text, "v2.4.2")
+            bump_addon.update_dockerfile_arg(text, "v2.4.2")
 
-    def test_update_build_arg_missing_raises(self):
+    def test_update_dockerfile_arg_missing_raises(self):
         with pytest.raises(ValueError):
-            bump_addon.update_build_arg("build_from:\n  amd64: img\n", "v2.4.2")
+            bump_addon.update_dockerfile_arg("FROM img\nARG BUILD_ARCH\n", "v2.4.2")
+
+    def test_update_dockerfile_arg_requires_quoted_default(self):
+        with pytest.raises(ValueError):
+            bump_addon.update_dockerfile_arg("ARG CARDIO2E_VERSION\n", "v2.4.2")
 
     def test_insert_changelog_entry_goes_right_after_title(self):
         entry = "## 1.0.18\n\n- Pull cardio2e v2.4.2:\n  - Only item\n"
@@ -145,7 +149,7 @@ class TestRun:
         addon = tmp_path / "addon" / "cardio2e"
         addon.mkdir(parents=True)
         (addon / "config.yaml").write_text('name: Cardio2e\nversion: "1.0.17"\n')
-        (addon / "build.yaml").write_text("args:\n  CARDIO2E_VERSION: v2.4.1\n")
+        (addon / "Dockerfile").write_text('FROM img\nARG CARDIO2E_VERSION="v2.4.1"\n')
         (addon / "CHANGELOG.md").write_text(ADDON_CHANGELOG)
         return cardio, addon
 
@@ -154,7 +158,7 @@ class TestRun:
         new_version = bump_addon.run("v2.4.2", cardio, addon)
         assert new_version == "1.0.18"
         assert (addon / "config.yaml").read_text() == 'name: Cardio2e\nversion: "1.0.18"\n'
-        assert (addon / "build.yaml").read_text() == "args:\n  CARDIO2E_VERSION: v2.4.2\n"
+        assert (addon / "Dockerfile").read_text() == 'FROM img\nARG CARDIO2E_VERSION="v2.4.2"\n'
         changelog = (addon / "CHANGELOG.md").read_text()
         assert "## 1.0.18\n\n- Pull cardio2e v2.4.2:\n  - Fixes:\n" in changelog
         assert changelog.index("## 1.0.18") < changelog.index("## 1.0.17")
@@ -172,7 +176,7 @@ class TestRun:
 
     def test_run_writes_nothing_when_already_pinned(self, repos):
         cardio, addon = repos
-        (addon / "build.yaml").write_text("args:\n  CARDIO2E_VERSION: v2.4.2\n")
+        (addon / "Dockerfile").write_text('FROM img\nARG CARDIO2E_VERSION="v2.4.2"\n')
         with pytest.raises(bump_addon.AlreadyPinned):
             bump_addon.run("v2.4.2", cardio, addon)
         assert (addon / "config.yaml").read_text() == 'name: Cardio2e\nversion: "1.0.17"\n'

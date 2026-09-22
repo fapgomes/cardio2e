@@ -7,8 +7,9 @@ repository, it:
 
 1. checks that the tag matches ``VERSION`` in ``cardio2e.py``;
 2. extracts the tag's section from this repository's ``CHANGELOG.md``;
-3. bumps the add-on patch version in ``config.yaml``, pins the tag in
-   ``build.yaml`` (``CARDIO2E_VERSION``) and prepends a changelog entry.
+3. bumps the add-on patch version in ``config.yaml``, pins the tag as the
+   default of ``ARG CARDIO2E_VERSION`` in the ``Dockerfile`` and prepends a
+   changelog entry.
 
 Usage::
 
@@ -89,14 +90,15 @@ def update_config_version(config_yaml: str, new_version: str) -> str:
     return text
 
 
-def update_build_arg(build_yaml: str, tag: str) -> str:
-    pattern = re.compile(r"^(\s*CARDIO2E_VERSION:\s*)(\S+)", re.MULTILINE)
-    match = pattern.search(build_yaml)
+def update_dockerfile_arg(dockerfile: str, tag: str) -> str:
+    """Replace the default of ``ARG CARDIO2E_VERSION="..."`` in the Dockerfile."""
+    pattern = re.compile(r'^(ARG CARDIO2E_VERSION=")([^"]*)(")', re.MULTILINE)
+    match = pattern.search(dockerfile)
     if not match:
-        raise ValueError("no CARDIO2E_VERSION argument in build.yaml")
+        raise ValueError('no \'ARG CARDIO2E_VERSION="..."\' line in Dockerfile')
     if match.group(2) == tag:
-        raise AlreadyPinned(f"build.yaml already pins {tag}")
-    return build_yaml[: match.start(2)] + tag + build_yaml[match.end(2) :]
+        raise AlreadyPinned(f"Dockerfile already pins {tag}")
+    return dockerfile[: match.start(2)] + tag + dockerfile[match.end(2) :]
 
 
 def insert_changelog_entry(addon_changelog: str, entry: str) -> str:
@@ -120,10 +122,10 @@ def run(tag: str, cardio_dir: Path, addon_dir: Path) -> str:
     section = extract_section((cardio_dir / "CHANGELOG.md").read_text(), tag)
 
     config_path = addon_dir / "config.yaml"
-    build_path = addon_dir / "build.yaml"
+    dockerfile_path = addon_dir / "Dockerfile"
     changelog_path = addon_dir / "CHANGELOG.md"
 
-    new_build = update_build_arg(build_path.read_text(), tag)
+    new_dockerfile = update_dockerfile_arg(dockerfile_path.read_text(), tag)
     config_text = config_path.read_text()
     current = read_addon_version(config_text)
     new_version = bump_patch(current)
@@ -131,7 +133,7 @@ def run(tag: str, cardio_dir: Path, addon_dir: Path) -> str:
     entry = render_addon_entry(new_version, tag, section)
     new_changelog = insert_changelog_entry(changelog_path.read_text(), entry)
 
-    build_path.write_text(new_build)
+    dockerfile_path.write_text(new_dockerfile)
     config_path.write_text(new_config)
     changelog_path.write_text(new_changelog)
     return new_version
