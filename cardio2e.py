@@ -20,7 +20,7 @@ from cardio2e_modules.cardio2e_memory import MemoryService
 from cardio2e_modules.cardio2e_web import start_web_server
 from cardio2e_modules import cardio2e_errors, cardio2e_covers, cardio2e_lights, cardio2e_switches, cardio2e_security, cardio2e_hvac, cardio2e_zones, cardio2e_scenarios
 
-VERSION = "2.4.2"
+VERSION = "2.5.0"
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.5.0 - 2026-10-12
+
+### Features
+- Back up and restore the controller's configuration memory (names, outlet/lamp settings such as auto off, periods and reactions, zones, ...) from an optional web panel (`[web]` section: `port`, `allowed_clients`, `backup_dir`). It takes full backups (~15 min), downloads, uploads and deletes them, and restores a file: the configuration area of the controller is read (~5 min), the differences are listed per field and, after confirmation, only the changed bytes are written and read back. The factory reset command (`@S ER`) is never sent; user/installer codes, emergency phones and the monitoring station are never restored; the overwritten values are saved first as a `before-restore-<date>.bin` backup. Backup and compare can be cancelled. Uses the undocumented `E` command family of the PCCardio software. In the Home Assistant add-on the panel is in the sidebar (ingress) and backups are stored in `/addon_configs/<repository>_cardio2e/backups`.
+- Commands keep working during a memory backup or compare. While the controller serves memory requests (and for ~11 s after the last one) it executes commands but stops its timers and sends no `@I` updates, so a relay pulsed with auto off stayed on for ~11 s and the outer gate ignored the pulse. An action command is now held until the controller has left that mode (about 12 s), memory access then pauses 30 s, and all entities are re-synced once memory access is idle.
+
 ## v2.4.2 - 2026-09-21
 
 ### Fixes
