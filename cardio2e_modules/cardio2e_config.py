@@ -67,6 +67,11 @@ class AppConfig(object):
         self.syslog_address = kwargs.get("syslog_address", "")
         self.syslog_port = kwargs.get("syslog_port", 514)
 
+        # Web panel (configuration memory backup/restore); port 0 = disabled
+        self.web_port = kwargs.get("web_port", 0)
+        self.web_allowed_clients = kwargs.get("web_allowed_clients", [])
+        self.backup_dir = kwargs.get("backup_dir", "backups")
+
         # MQTT
         self.mqtt_address = kwargs.get("mqtt_address", "localhost")
         self.mqtt_port = kwargs.get("mqtt_port", 1883)
@@ -271,6 +276,7 @@ def load_config(path="cardio2e.conf"):
     c2e = config["cardio2e"]
     mqtt = config["mqtt"]
     glb = config["global"]
+    web = config["web"] if config.has_section("web") else {}
 
     return AppConfig(
         debug=int(glb.get("debug", "0")),
@@ -295,6 +301,9 @@ def load_config(path="cardio2e.conf"):
         fetch_scenario_names=c2e.get("fetch_scenario_names", "true").lower() == "true",
         syslog_address=glb.get("syslog_address", ""),
         syslog_port=int(glb.get("syslog_port", "514")),
+        web_port=int(web.get("port", "0")),
+        web_allowed_clients=[c.strip() for c in web.get("allowed_clients", "").split(",") if c.strip()],
+        backup_dir=web.get("backup_dir", "backups"),
         mqtt_address=mqtt["address"],
         mqtt_port=int(mqtt["port"]),
         mqtt_username=mqtt["username"],

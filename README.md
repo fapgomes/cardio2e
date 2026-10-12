@@ -43,6 +43,19 @@ autodiscovery — no manual YAML is required.
   re-query, and so does a `@N` rejection of a light, switch or HVAC command
   once the retry window has passed, so Home Assistant never keeps a value the
   controller refused.
+- **Configuration memory backup and restore** (optional web panel, see
+  [`[web]`](#web)). The controller's configuration memory (34176 bytes:
+  names, outlet/lamp settings such as auto off, periods and reactions, zones,
+  ...) is read and written with the undocumented `E` command family used by
+  the PCCardio software. A restore first reads the controller, shows the
+  differences per field and writes only the changed bytes after confirmation,
+  reading them back to verify; it never sends the factory reset (`@S ER`) and
+  never touches the user/installer codes, emergency phones or monitoring
+  station. While the controller serves memory requests (and for ~11 s after
+  the last one) its timers stop and it sends no state updates, so a command
+  sent during a backup is held until the controller leaves that mode (about
+  12 s; a gate pulsed with auto off would otherwise ignore the long pulse),
+  memory access then pauses 30 s, and all entities are re-synced afterwards.
 - On startup the bridge logs in, parses the controller's initial state dump, and
   initializes covers and scenarios before subscribing to command topics.
 - The serial connection auto-reconnects with exponential backoff. The MQTT
@@ -114,7 +127,7 @@ sudo systemctl enable --now cardio2e
 
 ## Configuration
 
-The config file has three sections. Inline comments (`# ...`) are allowed.
+The config file has three main sections and an optional `[web]` section. Inline comments (`# ...`) are allowed.
 
 ### `[global]`
 
@@ -161,6 +174,25 @@ The config file has three sections. Inline comments (`# ...`) are allowed.
 | `port` | MQTT broker port (e.g. `1883`) |
 | `username` | MQTT username |
 | `password` | MQTT password |
+
+### `[web]`
+
+Optional web panel to back up, download, upload and restore the controller's
+configuration memory. A full backup takes about 15 minutes; comparing a file
+with the controller (the first step of a restore) about 5. Backup and compare
+can be cancelled; a restore cannot (it would leave the configuration half
+written). Before writing, the values being overwritten are saved as a
+`before-restore-<date>.bin` file, so a restore can be undone.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `port` | `0` | TCP port of the panel (`0` disables it) |
+| `allowed_clients` | *(empty)* | Comma-separated client addresses allowed to use the panel (empty = any) |
+| `backup_dir` | `backups` | Directory where backups are stored |
+
+> **The panel has no authentication.** Restrict it with `allowed_clients` or
+> a firewall. In the Home Assistant add-on it is only reachable through the
+> Home Assistant sidebar (ingress), which handles the login.
 
 ## Development
 

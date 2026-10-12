@@ -44,6 +44,14 @@ zones_normal_as_off = [14]       # this zones, will return off when N is returne
 nscenarios = 0  # total number of scenarios to initialize (0 = disabled)
 fetch_scenario_names = true  # on startup will fetch the current name of scenarios
 
+[web]
+# web panel to back up / restore the configuration memory (0 = disabled)
+port = 0
+# comma-separated client addresses allowed to use it (empty = any)
+allowed_clients =
+# where backups are stored
+backup_dir = backups
+
 [mqtt]
 address = 192.168.1.100
 port = 1883

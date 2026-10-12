@@ -270,3 +270,33 @@ class TestGarbledFragmentLogLevel:
             cardio2e_listener._dispatch_message(serial_conn, mqtt, AppConfig(), app_state, "@CCCC", ["@CCCC"])
         assert [r.levelno for r in caplog.records] == [logging.WARNING]
         assert "@CCCC" in caplog.records[0].getMessage()
+
+
+class TestBulkSession:
+    """While the controller serves memory (E) requests it sends no @I updates
+    (a relay's auto off is never reported). Everything is re-synced once the
+    memory session is over or paused."""
+
+    def test_loop_resyncs_once_after_session(self, mqtt, serial_conn, app_state, monkeypatch):
+        calls = []
+        active = {"on": True}
+        monkeypatch.setattr(cardio2e_listener, "bulk_session_active",
+                            lambda now=None: calls.append("check") or active["on"])
+        monkeypatch.setattr(cardio2e_listener, "_sync_all_entities", lambda *a: calls.append("sync"))
+        ev = threading.Event()
+        t = threading.Thread(
+            target=cardio2e_listener.listen_for_updates,
+            args=(serial_conn, mqtt, AppConfig(), app_state, ev),
+            daemon=True,
+        )
+        t.start()
+        try:
+            assert _wait_for(lambda: "check" in calls, timeout=3)
+            assert "sync" not in calls
+            active["on"] = False
+            assert _wait_for(lambda: "sync" in calls, timeout=3)
+            time.sleep(1.2)  # a couple more loop turns: no second sync
+        finally:
+            ev.set()
+            t.join(timeout=5)
+        assert calls.count("sync") == 1

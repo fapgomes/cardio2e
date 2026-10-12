@@ -36,6 +36,102 @@ _pending = []  # list of (predicate, queue.Queue)
 # (bootstrap), queries read the port directly.
 _reader_active = threading.Event()
 
+# Bulk traffic (configuration memory reads/writes) must give way to everything
+# else: a command written while the controller is still answering is garbled
+# on the wire. A bulk exchange (request + reply) holds ``_exchange_lock`` so no
+# other command is written in the middle of it, and bulk requests wait for the
+# bus to have been quiet (no other command written, no spontaneous message
+# received) for ``BULK_QUIET_PERIOD`` seconds.
+_exchange_lock = threading.RLock()
+BULK_QUIET_PERIOD = 1.5
+_last_activity = 0.0
+
+# The controller stays in a "memory mode" until about 11 s after the last E
+# request (measured). In that mode it still executes and acks commands, but
+# its timers stop and it broadcasts no @I updates: a relay pulsed with auto
+# off stays on until the mode ends, and the outer gate ignores such a long
+# pulse. So an action command (@S, except the periodic date) stops the bulk
+# traffic at once and is held until ``MEMORY_MODE_EXIT`` seconds after the
+# last E exchange; bulk requests then wait ``BULK_COMMAND_PAUSE`` seconds
+# after the command, so its timers (auto off) run and the new states are
+# reported normally.
+MEMORY_MODE_EXIT = 12.0
+BULK_COMMAND_PAUSE = 30.0
+_last_command = 0.0
+_last_bulk_exchange = 0.0
+
+# A bulk session is considered open until ``BULK_SESSION_WINDOW`` seconds
+# after the last bulk request (longer than the controller's memory mode, so
+# a re-sync at the end sees the real states; see ``bulk_session_active``).
+BULK_SESSION_WINDOW = 15.0
+_last_bulk = 0.0
+
+
+def _mark_activity():
+    """Record non-bulk bus activity (a command sent or a message received)."""
+    global _last_activity
+    _last_activity = time.monotonic()
+
+
+def _is_action(command):
+    return command.startswith("@S") and not command.startswith("@S D")
+
+
+def _hold_for_memory_mode(log_command):
+    """Stop bulk traffic for an action command and wait, if needed, until the
+    controller has left memory mode (see ``MEMORY_MODE_EXIT``)."""
+    global _last_command
+    with _exchange_lock:              # let an in-flight bulk exchange finish
+        _last_command = time.monotonic()
+        wait = MEMORY_MODE_EXIT - (_last_command - _last_bulk_exchange)
+    if _last_bulk_exchange and wait > 0:
+        _LOGGER.info("Holding %s for %.1fs: the controller is still in memory mode.",
+                     log_command.strip(), wait)
+        time.sleep(wait)
+
+
+def wait_for_quiet_bus(quiet=None):
+    """Block until the bus has had no non-bulk activity for ``quiet`` seconds
+    and no action command for ``BULK_COMMAND_PAUSE`` seconds."""
+    if quiet is None:
+        quiet = BULK_QUIET_PERIOD
+    paused = False
+    while True:
+        now = time.monotonic()
+        wait = max(quiet - (now - _last_activity), BULK_COMMAND_PAUSE - (now - _last_command))
+        if wait <= 0:
+            if paused:
+                _LOGGER.info("Memory access resumed.")
+            return
+        if not paused and BULK_COMMAND_PAUSE - (now - _last_command) > quiet:
+            _LOGGER.info("Memory access paused for %.0fs after a command, so the "
+                         "controller runs its timers (auto off).", wait)
+            paused = True
+        time.sleep(min(wait, 0.1) + 0.001)
+
+
+def bulk_request(serial_conn, command, predicate, timeout):
+    """One bulk exchange: wait for a quiet bus, then send ``command`` and wait
+    for the matching reply with no other command written in between.
+    Steady state only (served by the SerialReader). Returns the line or None."""
+    global _last_bulk, _last_bulk_exchange
+    _last_bulk = time.monotonic()
+    wait_for_quiet_bus()
+    try:
+        with _exchange_lock:
+            return _coordinated_request(serial_conn, command, predicate, timeout,
+                                        log_level=logging.DEBUG, bulk=True)
+    finally:
+        _last_bulk = _last_bulk_exchange = time.monotonic()
+
+
+def bulk_session_active(now=None):
+    """True while a bulk (memory) session is in progress or ended less than
+    ``BULK_SESSION_WINDOW`` seconds ago."""
+    if now is None:
+        now = time.monotonic()
+    return _last_bulk > 0 and now - _last_bulk < BULK_SESSION_WINDOW
+
 
 def _register(predicate):
     """Register a pending request; returns the queue the response lands on."""
@@ -77,20 +173,31 @@ def _deliver_to_pending(parts, raw_line):
     return False
 
 
-def _write(serial_conn, command, log_command=None):
+def _write(serial_conn, command, log_command=None, log_level=logging.INFO, bulk=False):
     """Single throttled write point for the RS-232 bus.
 
     Serializes writes across threads and enforces the minimum inter-command
     interval. Raises on I/O error (callers decide how to report it).
+    ``log_level`` lets bulk traffic (memory reads) log at DEBUG. A non-bulk
+    write waits for an in-flight bulk exchange to finish and pauses bulk
+    traffic for ``BULK_QUIET_PERIOD``, or ``BULK_COMMAND_PAUSE`` after an
+    action command, which is first held until the controller has left memory
+    mode (see ``MEMORY_MODE_EXIT``).
     """
-    global _last_command_time
+    global _last_command_time, _last_command
     if log_command is None:
         log_command = command
-    with _serial_lock:
+    if not bulk and _is_action(command):
+        _hold_for_memory_mode(log_command)
+    with _exchange_lock, _serial_lock:
+        if not bulk:
+            _mark_activity()
+            if _is_action(command):
+                _last_command = time.monotonic()
         elapsed = time.monotonic() - _last_command_time
         if elapsed < _MIN_COMMAND_INTERVAL:
             time.sleep(_MIN_COMMAND_INTERVAL - elapsed)
-        _LOGGER.info("Sending command to RS-232: %s", log_command)
+        _LOGGER.log(log_level, "Sending command to RS-232: %s", log_command)
         serial_conn.write(command.encode())
         serial_conn.flush()
         _last_command_time = time.monotonic()
@@ -166,12 +273,12 @@ def _direct_request(serial_conn, command, predicate, timeout):
     return None
 
 
-def _coordinated_request(serial_conn, command, predicate, timeout):
+def _coordinated_request(serial_conn, command, predicate, timeout, log_level=logging.INFO, bulk=False):
     """Steady-state request: register a pending entry, write, and wait for the
     reader thread to deliver a matching line. Returns the raw line or None."""
     q = _register(predicate)
     try:
-        _write(serial_conn, command)
+        _write(serial_conn, command, log_level=log_level, bulk=bulk)
         try:
             return q.get(timeout=timeout)
         except queue.Empty:
@@ -408,6 +515,7 @@ class SerialReader(threading.Thread):
             for msg, parts in _split_messages(received_message):
                 if _deliver_to_pending(parts, msg):
                     continue
+                _mark_activity()
                 try:
                     self._on_message(msg, parts)
                 except Exception:

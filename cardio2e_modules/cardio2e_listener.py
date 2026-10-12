@@ -5,7 +5,10 @@ import json
 import logging
 import time
 
-from .cardio2e_serial import send_date, send_command, query_state, SerialReader, reader_active, pending_count
+from .cardio2e_serial import (
+    send_date, send_command, query_state, SerialReader, reader_active, pending_count,
+    bulk_session_active,
+)
 from . import (
     cardio2e_errors,
     cardio2e_lights,
@@ -264,6 +267,7 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state, shutdown_eve
     last_time_sent = time.monotonic()
     last_heartbeat = time.monotonic()
     last_sync = time.monotonic()
+    was_bulk = False
 
     # Publish diagnostics autodiscovery on start
     _publish_diagnostics_autodiscovery(mqtt_client, config.ha_discover_prefix)
@@ -295,6 +299,16 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state, shutdown_eve
 
             # Re-query entities whose @A ack was not followed by an @I update
             _run_due_ack_verifications(serial_conn, mqtt_client, config, app_state, now)
+
+            # The controller reports no @I updates while it serves memory
+            # requests: re-sync everything once a memory session is over (or
+            # paused after a command, see BULK_COMMAND_PAUSE)
+            bulk = bulk_session_active(now)
+            if was_bulk and not bulk:
+                _LOGGER.info("Memory access idle; re-syncing all entities.")
+                _sync_all_entities(serial_conn, mqtt_client, config, app_state)
+                last_sync = now
+            was_bulk = bulk
 
             # Publish heartbeat + diagnostics periodically
             if (now - last_heartbeat) >= HEARTBEAT_INTERVAL:

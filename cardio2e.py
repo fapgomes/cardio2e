@@ -16,6 +16,8 @@ from cardio2e_modules.cardio2e_mqtt import (
 from cardio2e_modules.cardio2e_serial import login, logout, query_name
 from cardio2e_modules.cardio2e_listener import listen_for_updates, _get_entity_state
 from cardio2e_modules.cardio2e_autodiscovery import publish_config as publish_autodiscovery_config
+from cardio2e_modules.cardio2e_memory import MemoryService
+from cardio2e_modules.cardio2e_web import start_web_server
 from cardio2e_modules import cardio2e_errors, cardio2e_covers, cardio2e_lights, cardio2e_switches, cardio2e_security, cardio2e_hvac, cardio2e_zones, cardio2e_scenarios
 
 VERSION = "2.4.2"
@@ -204,6 +206,13 @@ def main():
     mqtt_client = None
     shutdown_event = threading.Event()
 
+    memory_service = MemoryService(cfg.backup_dir)
+    if cfg.web_port:
+        try:
+            start_web_server(memory_service, cfg.web_port, cfg.web_allowed_clients)
+        except OSError as e:
+            _LOGGER.error("Could not start the web panel on port %d: %s", cfg.web_port, e)
+
     def handle_shutdown(signum, frame):
         # Keep the signal handler minimal and I/O-free: doing serial/MQTT I/O
         # from the signal context raced with the running threads. Just signal;
@@ -222,6 +231,7 @@ def main():
             if serial_conn is None or not serial_conn.is_open:
                 _LOGGER.info("Opening serial connection...")
                 serial_conn = _connect_serial(cfg)
+                memory_service.set_serial_conn(serial_conn)
 
             # Connect MQTT (once; it survives serial reconnects)
             if mqtt_client is None:
