@@ -62,6 +62,8 @@ class AppConfig(object):
         # Scenarios
         self.nscenarios = kwargs.get("nscenarios", 0)
         self.fetch_scenario_names = kwargs.get("fetch_scenario_names", True)
+        # Config entities for the outlet/lamp settings in the configuration memory
+        self.config_entities = kwargs.get("config_entities", True)
 
         # Syslog
         self.syslog_address = kwargs.get("syslog_address", "")
@@ -299,6 +301,7 @@ def load_config(path="cardio2e.conf"):
         zones_normal_as_off=_parse_list_config(c2e.get("zones_normal_as_off", "[]"), "zones_normal_as_off"),
         nscenarios=int(c2e.get("nscenarios", "0")),
         fetch_scenario_names=c2e.get("fetch_scenario_names", "true").lower() == "true",
+        config_entities=c2e.get("config_entities", "true").lower() == "true",
         syslog_address=glb.get("syslog_address", ""),
         syslog_port=int(glb.get("syslog_port", "514")),
         web_port=int(web.get("port", "0")),

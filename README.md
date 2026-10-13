@@ -56,6 +56,17 @@ autodiscovery — no manual YAML is required.
   sent during a backup is held until the controller leaves that mode (about
   12 s; a gate pulsed with auto off would otherwise ignore the long pulse),
   memory access then pauses 30 s, and all entities are re-synced afterwards.
+- **Outlet and lamp settings as config entities** (`config_entities`).
+  Every known switch and light gets config entities (`entity_category:
+  config`) for its settings in the configuration memory: name, auto off,
+  device state and reaction duration (outlets), deterrence delay, intensity
+  and duration (lamps), the reaction options, pulse zone and active period.
+  Only *Auto off* and *Duration* are enabled by default. The records are read
+  in the background after startup, after a restore and on the *Reload
+  configuration* button (on both devices); a change reads the record,
+  writes only the changed bytes and reads them back before the entity shows
+  the new value. A rename is also propagated to the Home Assistant entity.
+  Settings access never overlaps a backup or restore of the web panel.
 - On startup the bridge logs in, parses the controller's initial state dump, and
   initializes covers and scenarios before subscribing to command topics.
 - The serial connection auto-reconnects with exponential backoff. The MQTT
@@ -160,6 +171,7 @@ The config file has three main sections and an optional `[web]` section. Inline 
 | `zones_normal_as_off` | `[]` | Zone ids whose "normal" state should report `OFF` (inverted) |
 | `nscenarios` | `0` | Number of scenarios to initialize (`0` disables; iterated 1..N) |
 | `fetch_scenario_names` | `true` | Fetch scenario names on startup |
+| `config_entities` | `true` | Config entities for the outlet/lamp settings in the configuration memory |
 
 > **Note on `ncovers` / `nscenarios`:** covers and scenarios are iterated blindly
 > from 1 to N (they are not discovered from the login dump). Set these to your

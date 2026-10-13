@@ -43,6 +43,7 @@ zones_normal_as_off = [14]       # this zones, will return off when N is returne
 # scenario (macro) config
 nscenarios = 0  # total number of scenarios to initialize (0 = disabled)
 fetch_scenario_names = true  # on startup will fetch the current name of scenarios
+config_entities = true  # config entities for the outlet/lamp settings (names, auto off, durations, ...)
 
 [web]
 # web panel to back up / restore the configuration memory (0 = disabled)

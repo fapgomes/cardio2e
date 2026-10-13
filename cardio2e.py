@@ -11,12 +11,13 @@ import serial
 from cardio2e_modules.cardio2e_config import load_config, AppState
 from cardio2e_modules.cardio2e_mqtt import (
     create_mqtt_client, publish_available, publish_not_available,
-    subscribe_after_init, suspend_commands, set_serial_conn,
+    subscribe_after_init, suspend_commands, set_serial_conn, set_settings_manager,
 )
 from cardio2e_modules.cardio2e_serial import login, logout, query_name
 from cardio2e_modules.cardio2e_listener import listen_for_updates, _get_entity_state
 from cardio2e_modules.cardio2e_autodiscovery import publish_config as publish_autodiscovery_config
 from cardio2e_modules.cardio2e_memory import MemoryService
+from cardio2e_modules.cardio2e_settings import SettingsManager, remove_entities as remove_settings_entities
 from cardio2e_modules.cardio2e_web import start_web_server
 from cardio2e_modules import cardio2e_errors, cardio2e_covers, cardio2e_lights, cardio2e_switches, cardio2e_security, cardio2e_hvac, cardio2e_zones, cardio2e_scenarios
 
@@ -207,6 +208,7 @@ def main():
     shutdown_event = threading.Event()
 
     memory_service = MemoryService(cfg.backup_dir)
+    settings_started = False
     if cfg.web_port:
         try:
             start_web_server(memory_service, cfg.web_port, cfg.web_allowed_clients)
@@ -255,6 +257,19 @@ def main():
             publish_available(mqtt_client)
 
             _LOGGER.info("\n################\nCardio2e ready. Listening for events.\n################")
+
+            # Config entities (outlet/lamp settings): once, after the first
+            # init (entity ids and names are known). The records are read in
+            # the background once the reader runs.
+            if not settings_started:
+                settings_started = True
+                if cfg.config_entities:
+                    settings = SettingsManager(memory_service, mqtt_client, cfg, app_state)
+                    set_settings_manager(mqtt_client, settings)
+                    memory_service.add_restore_listener(settings.request_reload)
+                    settings.start()
+                else:
+                    remove_settings_entities(mqtt_client, cfg, app_state)
 
             # Reset backoff on successful connection
             backoff = 1

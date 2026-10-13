@@ -110,6 +110,8 @@ _COMMAND_TOPICS = (
     "cardio2e/alarm/set/#",
     "cardio2e/zone/bypass/set/#",
     "cardio2e/scene/set/#",
+    "cardio2e/config/+/+/+/set",
+    "cardio2e/config/reload",
 )
 
 
@@ -142,6 +144,11 @@ def suspend_commands(mqtt_client):
     for topic in _COMMAND_TOPICS:
         mqtt_client.unsubscribe(topic)
     _LOGGER.info("Command topics unsubscribed until re-initialization.")
+
+
+def set_settings_manager(mqtt_client, manager):
+    """Route the config entity commands (``cardio2e/config/...``) to ``manager``."""
+    _userdata_of(mqtt_client)["settings"] = manager
 
 
 def set_serial_conn(mqtt_client, serial_conn):
@@ -228,3 +235,8 @@ def _route_message(client, userdata, msg):
 
     elif topic.startswith("cardio2e/scene/set/"):
         cardio2e_scenarios.handle_set_command(serial_conn, topic, payload, config)
+
+    elif topic.startswith("cardio2e/config/"):
+        settings = userdata.get("settings")
+        if settings is not None:
+            settings.handle_command(topic, payload)

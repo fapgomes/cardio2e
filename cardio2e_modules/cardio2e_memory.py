@@ -24,6 +24,7 @@ garble light/relay commands. They are served by the SerialReader (steady
 state only).
 """
 
+import contextlib
 import datetime
 import logging
 import os
@@ -332,10 +333,32 @@ class MemoryService(object):
         self._job = None        # dict, see _start()
         self._plan = None       # pending restore: {id, source, runs, changes}
         self._cancel = threading.Event()
+        # Held for a whole job and for every settings operation: an E read
+        # in the middle of another one moves the controller's read pointer
+        # (the other read would get valid blocks from the wrong address).
+        self._op_lock = threading.Lock()
+        self._restore_listeners = []
 
     def set_serial_conn(self, serial_conn):
         with self._lock:
             self._serial_conn = serial_conn
+
+    @contextlib.contextmanager
+    def exclusive(self, timeout):
+        """Memory access outside the jobs (settings entities): waits up to
+        ``timeout`` seconds for a running job; yields the serial connection."""
+        if not self._op_lock.acquire(timeout=timeout):
+            raise RuntimeError("the configuration memory is busy (backup or restore running)")
+        try:
+            if not reader_active() or self._serial_conn is None:
+                raise RuntimeError("cardio2e is not connected")
+            yield self._serial_conn
+        finally:
+            self._op_lock.release()
+
+    def add_restore_listener(self, callback):
+        """``callback()`` runs after every successful restore."""
+        self._restore_listeners.append(callback)
 
     def cancel(self):
         """Stop the running backup or compare after the current block. A
@@ -451,8 +474,12 @@ class MemoryService(object):
 
     def _run(self, job, target):
         try:
-            job["message"] = target(job) or ""
+            with self._op_lock:
+                job["message"] = target(job) or ""
             job["state"] = "done"
+            if job["kind"] == "apply":
+                for callback in self._restore_listeners:
+                    callback()
         except JobCancelled:
             _LOGGER.info("Memory %s cancelled.", job["kind"])
             job["state"] = "cancelled"

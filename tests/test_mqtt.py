@@ -58,7 +58,7 @@ class TestSubscribeAfterInit:
         client = cardio2e_mqtt.create_mqtt_client(cfg, FakeSerial(), AppState(), lambda *a: None)
         cardio2e_mqtt.subscribe_after_init(client)
         assert client._userdata["init_complete"] is True
-        assert len(client.subscriptions) == 8
+        assert len(client.subscriptions) == len(cardio2e_mqtt._COMMAND_TOPICS) == 10
 
 
 class TestIsFailure:
