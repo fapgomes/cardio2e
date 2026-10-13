@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.6.0 - 2026-10-13
+
+### Features
+- Outlet and lamp settings as Home Assistant config entities (`config_entities`, default `true`). Every known switch and light gets config entities for its record in the configuration memory: name, auto off, device state and reaction duration (outlets), deterrence delay, intensity and duration (lamps), the reaction options (off/blink on doorbell, phone or intrusion, soft, sunrise/sunset reaction), pulse zone and active period (time, sunset or sunrise). Only *Auto off* and *Duration* are enabled by default. The records are read in the background after startup, after a restore and on the *Reload configuration* button (on the Switches and Lights devices); a change reads the record, writes only the changed bytes and reads them back before the entity shows the new value. Renaming a switch or light (up to 8 ASCII characters) also renames its Home Assistant entity, and names changed on the touch panel are picked up on reload. Settings access never overlaps a backup or restore of the web panel; while settings are read or written, commands are held for up to ~12 s as during a backup.
+
 ## v2.5.0 - 2026-10-12
 
 ### Features
