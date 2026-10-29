@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.6.1 - 2026-10-29
+
+### Fixes
+- The periodic sync waits for a quiet serial line before each query. Its burst of `@G` queries collided with the `@I` updates the controller sends on its own (e.g. a motion zone reporting every few seconds): the garbled query was rejected as `@N   1 1` (*Object type specified by the transaction is not recognized*, type and id lost on the wire), which showed up on the error sensor, and the update lost its header and was dropped. Each sync query (retries included) now waits for 0.3 s without received bytes, at most 2 s; other queries and commands are not delayed. The sync takes longer (~30–40 s instead of ~15 s).
+
 ## v2.6.0 - 2026-10-13
 
 ### Features
