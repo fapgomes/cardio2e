@@ -66,11 +66,27 @@ _last_bulk_exchange = 0.0
 BULK_SESSION_WINDOW = 15.0
 _last_bulk = 0.0
 
+# The controller sends @I updates whenever it likes; a query written while one
+# is on the wire garbles both (the reply comes back as e.g. "@N   1 1"). The
+# periodic sync, which fires a burst of queries, waits before each one for no
+# byte to have been received for ``SYNC_QUIET_PERIOD`` seconds, giving up after
+# ``SYNC_QUIET_MAX_WAIT`` seconds so a chatty controller cannot stall it.
+SYNC_QUIET_PERIOD = 0.3
+SYNC_QUIET_MAX_WAIT = 2.0
+_last_rx = 0.0
+
 
 def _mark_activity():
     """Record non-bulk bus activity (a command sent or a message received)."""
     global _last_activity
     _last_activity = time.monotonic()
+
+
+def _mark_rx():
+    """Record that bytes were received (any byte, even mid-line; see
+    ``SYNC_QUIET_PERIOD``)."""
+    global _last_rx
+    _last_rx = time.monotonic()
 
 
 def _is_action(command):
@@ -108,6 +124,25 @@ def wait_for_quiet_bus(quiet=None):
                          "controller runs its timers (auto off).", wait)
             paused = True
         time.sleep(min(wait, 0.1) + 0.001)
+
+
+def wait_for_quiet_rx(quiet=None, max_wait=None):
+    """Block until no byte has been received for ``quiet`` seconds, or for at
+    most ``max_wait`` seconds. Returns True if the line went quiet."""
+    if quiet is None:
+        quiet = SYNC_QUIET_PERIOD
+    if max_wait is None:
+        max_wait = SYNC_QUIET_MAX_WAIT
+    deadline = time.monotonic() + max_wait
+    while True:
+        now = time.monotonic()
+        wait = quiet - (now - _last_rx)
+        if wait <= 0:
+            return True
+        if now >= deadline:
+            _LOGGER.debug("Serial line still busy after %.1fs; sending anyway.", max_wait)
+            return False
+        time.sleep(min(wait, deadline - now, 0.1) + 0.001)
 
 
 def bulk_request(serial_conn, command, predicate, timeout):
@@ -287,13 +322,16 @@ def _coordinated_request(serial_conn, command, predicate, timeout, log_level=log
         _unregister(q)
 
 
-def _send_and_match(serial_conn, command, predicate, timeout, max_retries):
+def _send_and_match(serial_conn, command, predicate, timeout, max_retries, quiet=False):
     """Send `command` and return the first line whose parts match `predicate`,
     using the coordinated path when the reader owns the port, otherwise a direct
-    read. Retries up to `max_retries`. Returns the raw line or None."""
+    read. Retries up to `max_retries`. With `quiet`, each attempt first waits
+    for a quiet line (see ``SYNC_QUIET_PERIOD``). Returns the raw line or None."""
     for _ in range(max_retries):
         try:
             if _reader_active.is_set():
+                if quiet:
+                    wait_for_quiet_rx()
                 line = _coordinated_request(serial_conn, command, predicate, timeout)
             else:
                 line = _direct_request(serial_conn, command, predicate, timeout)
@@ -313,14 +351,14 @@ def _is_nack_for(parts, entity_type, entity_id=None):
     return entity_id is None or len(parts) == 3 or parts[2] == str(entity_id)
 
 
-def _query(serial_conn, command, predicate, nack_predicate, timeout, max_retries):
+def _query(serial_conn, command, predicate, nack_predicate, timeout, max_retries, quiet=False):
     """Send a ``@G`` query. Returns the matching ``@I`` line, or None when
     there was no reply or the controller answered with ``@N`` (a NACK is a
     definitive answer, so it is not retried)."""
     def matches(parts):
         return predicate(parts) or nack_predicate(parts)
 
-    line = _send_and_match(serial_conn, command, matches, timeout, max_retries)
+    line = _send_and_match(serial_conn, command, matches, timeout, max_retries, quiet)
     if line is not None and line.startswith("@N"):
         _LOGGER.warning("Query %r rejected by cardio2e: %s", command.strip(), format_error_message(line.split()))
         return None
@@ -349,9 +387,10 @@ def query_name(serial_conn, entity_id, entity_type, max_retries=3, timeout=10):
     return name_part.split("@")[0].strip()
 
 
-def query_state(serial_conn, entity_id, entity_type, timeout=0.5, max_retries=5):
+def query_state(serial_conn, entity_id, entity_type, timeout=0.5, max_retries=5, quiet=False):
     """
     Query the state of an entity via RS-232.
+    With `quiet`, each attempt waits for a quiet line first (periodic sync).
     Returns the raw message parts list on success, or None on failure.
     """
     command = f"@G {entity_type} 1{CARDIO2E_TERMINATOR}" if entity_type == "Z" else f"@G {entity_type} {entity_id}{CARDIO2E_TERMINATOR}"
@@ -370,7 +409,7 @@ def query_state(serial_conn, entity_id, entity_type, timeout=0.5, max_retries=5)
         def nack_predicate(parts):
             return _is_nack_for(parts, entity_type, entity_id)
 
-    line = _query(serial_conn, command, predicate, nack_predicate, timeout, max_retries)
+    line = _query(serial_conn, command, predicate, nack_predicate, timeout, max_retries, quiet)
     if line is None:
         _LOGGER.warning("Could not get state for entity %s %s after %d attempts.", entity_type, entity_id, max_retries)
         return None
@@ -535,6 +574,7 @@ class SerialReader(threading.Thread):
                     if not raw:
                         time.sleep(0.01)
                         continue
+                    _mark_rx()
                     self._buffer += raw
                     self._process_buffer()
                 except Exception as e:

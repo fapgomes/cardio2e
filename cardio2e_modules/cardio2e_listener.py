@@ -126,6 +126,9 @@ def _run_due_ack_verifications(serial_conn, mqtt_client, config, app_state, now=
 def _sync_all_entities(serial_conn, mqtt_client, config, app_state):
     """Re-query state of all known entities and republish to MQTT.
 
+    Each query first waits for a quiet serial line, so it does not collide
+    with a spontaneous @I update (see ``SYNC_QUIET_PERIOD``).
+
     Covers are republished from the cached state instead of querying
     the Cardio2e via RS-232, because the ``@G C`` query causes the
     controller to re-issue the position command to the motor, making
@@ -135,7 +138,7 @@ def _sync_all_entities(serial_conn, mqtt_client, config, app_state):
     count = 0
 
     # Z (zones): query with ID 1 (returns all zones)
-    _get_entity_state(serial_conn, mqtt_client, 1, "Z", config, app_state)
+    _get_entity_state(serial_conn, mqtt_client, 1, "Z", config, app_state, quiet=True)
     count += 1
 
     # B (bypass): republish from cache — the controller rejects @G B 1 (@N B 2)
@@ -145,7 +148,7 @@ def _sync_all_entities(serial_conn, mqtt_client, config, app_state):
         count += 1
 
     # S: security, always ID 1
-    _get_entity_state(serial_conn, mqtt_client, 1, "S", config, app_state)
+    _get_entity_state(serial_conn, mqtt_client, 1, "S", config, app_state, quiet=True)
     count += 1
 
     # L, R, H, T: iterate known IDs and query via RS-232. Temperature (T)
@@ -153,7 +156,7 @@ def _sync_all_entities(serial_conn, mqtt_client, config, app_state):
     for entity_type, id_source in (("L", "L"), ("R", "R"), ("H", "H"), ("T", "H")):
         entity_ids = app_state.get_known_entity_ids(id_source)
         for entity_id in entity_ids:
-            _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, app_state)
+            _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, app_state, quiet=True)
             count += 1
 
     # C (covers): republish from cache only — do NOT query RS-232
@@ -412,9 +415,10 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
         _LOGGER.warning("Response not processed: %s", message_parts)
 
 
-def _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, app_state):
-    """Query entity state and publish to MQTT (used internally by listener)."""
-    message_parts = query_state(serial_conn, entity_id, entity_type)
+def _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, app_state, quiet=False):
+    """Query entity state and publish to MQTT (used internally by listener).
+    ``quiet`` waits for a quiet serial line before querying (periodic sync)."""
+    message_parts = query_state(serial_conn, entity_id, entity_type, quiet=quiet)
     if message_parts is None:
         return None
 

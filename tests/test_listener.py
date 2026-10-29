@@ -172,11 +172,25 @@ class TestSyncAllEntities:
         queried = []
         monkeypatch.setattr(
             cardio2e_listener, "_get_entity_state",
-            lambda s, m, eid, etype, cfg, st: queried.append((etype, eid)),
+            lambda s, m, eid, etype, cfg, st, quiet=False: queried.append((etype, eid)),
         )
         cardio2e_listener._sync_all_entities(serial_conn, mqtt, AppConfig(), app_state)
         assert [eid for etype, eid in queried if etype == "T"] == [1, 3]
         assert [eid for etype, eid in queried if etype == "H"] == [1, 3]
+
+    def test_every_query_waits_for_a_quiet_line(self, mqtt, serial_conn, app_state, monkeypatch):
+        # Sync queries must not collide with spontaneous @I updates
+        app_state.register_entity("L", 4)
+        app_state.register_entity("R", 2)
+        app_state.register_entity("H", 1)
+        quiet_flags = []
+        monkeypatch.setattr(
+            cardio2e_listener, "_get_entity_state",
+            lambda s, m, eid, etype, cfg, st, quiet=False: quiet_flags.append(quiet),
+        )
+        cardio2e_listener._sync_all_entities(serial_conn, mqtt, AppConfig(), app_state)
+        # Z, S, L 4, R 2, H 1, T 1
+        assert quiet_flags == [True] * 6
 
 
 class TestGetEntityStateHvac:

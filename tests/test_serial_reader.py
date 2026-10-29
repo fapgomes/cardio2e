@@ -210,3 +210,72 @@ class TestCoordinatedQueryNack:
         finally:
             reader.stop()
             reader.join(timeout=2)
+
+
+class TestQuietLine:
+    """The periodic sync waits for a quiet line before each query, so it does
+    not collide with a spontaneous @I update (see SYNC_QUIET_PERIOD)."""
+
+    def test_reader_records_received_bytes(self, monkeypatch):
+        monkeypatch.setattr(cs, "_last_rx", 0.0)
+        conn = FakeSerial()
+        reader = cs.SerialReader(conn, on_message=lambda msg, parts: None)
+        reader.start()
+        try:
+            before = time.monotonic()
+            conn.feed(b"@I Z 1 CCCC")  # incomplete line still counts
+            deadline = time.time() + 2
+            while cs._last_rx < before and time.time() < deadline:
+                time.sleep(0.01)
+            assert cs._last_rx >= before
+        finally:
+            reader.stop()
+            reader.join(timeout=2)
+
+    def test_returns_at_once_on_a_quiet_line(self, monkeypatch):
+        monkeypatch.setattr(cs, "_last_rx", time.monotonic() - 1.0)
+        start = time.monotonic()
+        assert cs.wait_for_quiet_rx(quiet=0.3, max_wait=2.0) is True
+        assert time.monotonic() - start < 0.05
+
+    def test_waits_for_the_quiet_period(self, monkeypatch):
+        monkeypatch.setattr(cs, "_last_rx", time.monotonic())
+        start = time.monotonic()
+        assert cs.wait_for_quiet_rx(quiet=0.2, max_wait=2.0) is True
+        assert time.monotonic() - start >= 0.19
+
+    def test_gives_up_after_max_wait(self, monkeypatch):
+        def keep_busy():
+            end = time.monotonic() + 1.0
+            while time.monotonic() < end:
+                cs._mark_rx()
+                time.sleep(0.02)
+        monkeypatch.setattr(cs, "_last_rx", 0.0)
+        cs._mark_rx()
+        busy = threading.Thread(target=keep_busy, daemon=True)
+        busy.start()
+        start = time.monotonic()
+        assert cs.wait_for_quiet_rx(quiet=0.2, max_wait=0.3) is False
+        elapsed = time.monotonic() - start
+        busy.join()
+        assert 0.29 <= elapsed < 0.6
+
+    def test_quiet_query_waits_before_each_attempt(self, monkeypatch):
+        waits = []
+        monkeypatch.setattr(cs, "wait_for_quiet_rx", lambda: waits.append(1))
+        cs._reader_active.set()
+        try:
+            assert cs.query_state(FakeSerial(), 5, "L", timeout=0.01, max_retries=3, quiet=True) is None
+        finally:
+            cs._reader_active.clear()
+        assert len(waits) == 3
+
+    def test_plain_query_does_not_wait(self, monkeypatch):
+        waits = []
+        monkeypatch.setattr(cs, "wait_for_quiet_rx", lambda: waits.append(1))
+        cs._reader_active.set()
+        try:
+            assert cs.query_state(FakeSerial(), 5, "L", timeout=0.01, max_retries=2) is None
+        finally:
+            cs._reader_active.clear()
+        assert waits == []

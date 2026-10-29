@@ -27,6 +27,8 @@ def _no_serial_throttle(monkeypatch):
     import cardio2e_modules.cardio2e_serial as cs
 
     monkeypatch.setattr(cs, "_MIN_COMMAND_INTERVAL", 0, raising=False)
+    # No quiet-line wait before sync queries (see SYNC_QUIET_PERIOD)
+    monkeypatch.setattr(cs, "SYNC_QUIET_PERIOD", 0, raising=False)
     # No memory session leaks from one test into the next
     monkeypatch.setattr(cs, "_last_bulk", 0.0, raising=False)
     monkeypatch.setattr(cs, "_last_command", 0.0, raising=False)
