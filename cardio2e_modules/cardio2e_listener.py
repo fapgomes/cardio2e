@@ -152,10 +152,14 @@ def _sync_all_entities(serial_conn, mqtt_client, config, app_state):
     count += 1
 
     # L, R, H, T: iterate known IDs and query via RS-232. Temperature (T)
-    # readings have no ids of their own: they belong to the HVAC (H) entities.
+    # readings have no ids of their own: they belong to the HVAC (H) entities,
+    # but not every HVAC zone has a sensor; the controller rejects the others
+    # as out of range and they are skipped from then on.
     for entity_type, id_source in (("L", "L"), ("R", "R"), ("H", "H"), ("T", "H")):
         entity_ids = app_state.get_known_entity_ids(id_source)
         for entity_id in entity_ids:
+            if entity_type == "T" and app_state.is_entity_absent("T", entity_id):
+                continue
             _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, app_state, quiet=True)
             count += 1
 
@@ -415,10 +419,38 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
         _LOGGER.warning("Response not processed: %s", message_parts)
 
 
+def _mark_missing_temperature_sensor(mqtt_client, app_state, entity_id, parts):
+    """Handle a NACK to ``@G T <id>``: ``@N T <id> 2`` (out of range) means the
+    HVAC zone has no temperature sensor, although the login reports it (as
+    0.00). Mark it, so its readings are ignored and the periodic sync stops
+    querying it, and clear the zone's current temperature in Home Assistant
+    (``None`` is the MQTT climate's "no value" payload; an empty one is
+    ignored). Returns True if the NACK was that one (and was logged here)."""
+    if parts != ["@N", "T", str(entity_id), "2"]:
+        return False
+    if app_state.mark_entity_absent("T", entity_id):
+        mqtt_client.publish(f"cardio2e/hvac/{entity_id}/state/current_temperature", "None", retain=True)
+        _LOGGER.info("Temperature sensor %s does not exist on the controller (%s); "
+                     "cleared its temperature and skipping it from now on.", entity_id, " ".join(parts))
+    return True
+
+
+def probe_temperature_sensors(serial_conn, mqtt_client, config, app_state, sensor_ids):
+    """Query each temperature sensor once (at login, before its reading is
+    published), so the ones the controller rejects are marked absent and
+    their 0.00 reading never reaches Home Assistant."""
+    for sensor_id in sensor_ids:
+        if not app_state.is_entity_absent("T", sensor_id):
+            _get_entity_state(serial_conn, mqtt_client, sensor_id, "T", config, app_state)
+
+
 def _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, app_state, quiet=False):
     """Query entity state and publish to MQTT (used internally by listener).
     ``quiet`` waits for a quiet serial line before querying (periodic sync)."""
-    message_parts = query_state(serial_conn, entity_id, entity_type, quiet=quiet)
+    on_nack = None
+    if entity_type == "T" and app_state is not None:
+        on_nack = lambda parts: _mark_missing_temperature_sensor(mqtt_client, app_state, entity_id, parts)
+    message_parts = query_state(serial_conn, entity_id, entity_type, quiet=quiet, on_nack=on_nack)
     if message_parts is None:
         return None
 

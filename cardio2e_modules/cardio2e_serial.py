@@ -351,16 +351,21 @@ def _is_nack_for(parts, entity_type, entity_id=None):
     return entity_id is None or len(parts) == 3 or parts[2] == str(entity_id)
 
 
-def _query(serial_conn, command, predicate, nack_predicate, timeout, max_retries, quiet=False):
+def _query(serial_conn, command, predicate, nack_predicate, timeout, max_retries, quiet=False,
+           on_nack=None):
     """Send a ``@G`` query. Returns the matching ``@I`` line, or None when
     there was no reply or the controller answered with ``@N`` (a NACK is a
-    definitive answer, so it is not retried)."""
+    definitive answer, so it is not retried). A NACK is handed to `on_nack`
+    (when given); if it returns True, it handled the NACK and nothing is
+    logged here."""
     def matches(parts):
         return predicate(parts) or nack_predicate(parts)
 
     line = _send_and_match(serial_conn, command, matches, timeout, max_retries, quiet)
     if line is not None and line.startswith("@N"):
-        _LOGGER.warning("Query %r rejected by cardio2e: %s", command.strip(), format_error_message(line.split()))
+        parts = line.split()
+        if on_nack is None or not on_nack(parts):
+            _LOGGER.warning("Query %r rejected by cardio2e: %s", command.strip(), format_error_message(parts))
         return None
     return line
 
@@ -387,10 +392,12 @@ def query_name(serial_conn, entity_id, entity_type, max_retries=3, timeout=10):
     return name_part.split("@")[0].strip()
 
 
-def query_state(serial_conn, entity_id, entity_type, timeout=0.5, max_retries=5, quiet=False):
+def query_state(serial_conn, entity_id, entity_type, timeout=0.5, max_retries=5, quiet=False,
+                on_nack=None):
     """
     Query the state of an entity via RS-232.
     With `quiet`, each attempt waits for a quiet line first (periodic sync).
+    A ``@N`` reply is handed to `on_nack` (see ``_query``).
     Returns the raw message parts list on success, or None on failure.
     """
     command = f"@G {entity_type} 1{CARDIO2E_TERMINATOR}" if entity_type == "Z" else f"@G {entity_type} {entity_id}{CARDIO2E_TERMINATOR}"
@@ -409,9 +416,19 @@ def query_state(serial_conn, entity_id, entity_type, timeout=0.5, max_retries=5,
         def nack_predicate(parts):
             return _is_nack_for(parts, entity_type, entity_id)
 
-    line = _query(serial_conn, command, predicate, nack_predicate, timeout, max_retries, quiet)
+    handled = []
+
+    def nack_handler(parts):
+        if on_nack is not None and on_nack(parts):
+            handled.append(parts)
+            return True
+        return False
+
+    line = _query(serial_conn, command, predicate, nack_predicate, timeout, max_retries, quiet,
+                  on_nack=nack_handler)
     if line is None:
-        _LOGGER.warning("Could not get state for entity %s %s after %d attempts.", entity_type, entity_id, max_retries)
+        if not handled:
+            _LOGGER.warning("Could not get state for entity %s %s after %d attempts.", entity_type, entity_id, max_retries)
         return None
     return line.split()
 

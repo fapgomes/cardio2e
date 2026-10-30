@@ -193,6 +193,79 @@ class TestSyncAllEntities:
         assert quiet_flags == [True] * 6
 
 
+class TestMissingTemperatureSensor:
+    """The login reports @I T for every HVAC zone (0.00 without a sensor), but
+    @G T <id> is rejected as out of range (@N T <id> 2) for zones without one:
+    those are skipped by the periodic sync from then on."""
+
+    def test_out_of_range_nack_marks_the_sensor_absent(self, mqtt, serial_conn, app_state):
+        serial_conn.feed(b"@N T 2 2\r")
+        assert cardio2e_listener._get_entity_state(serial_conn, mqtt, 2, "T", AppConfig(), app_state) is None
+        assert app_state.is_entity_absent("T", 2)
+        assert len(serial_conn.written) == 1  # a NACK is not retried
+
+    def test_out_of_range_nack_is_logged_once_at_info(self, mqtt, serial_conn, app_state, caplog):
+        caplog.set_level(logging.INFO)
+        for _ in range(2):
+            serial_conn.feed(b"@N T 2 2\r")
+            cardio2e_listener._get_entity_state(serial_conn, mqtt, 2, "T", AppConfig(), app_state)
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert len([r for r in caplog.records if "does not exist" in r.getMessage()]) == 1
+
+    def test_out_of_range_nack_clears_the_temperature_once(self, mqtt, serial_conn, app_state):
+        # "None" clears the MQTT climate's current temperature (an empty payload is ignored)
+        for _ in range(2):
+            serial_conn.feed(b"@N T 2 2\r")
+            cardio2e_listener._get_entity_state(serial_conn, mqtt, 2, "T", AppConfig(), app_state)
+        assert mqtt.messages == [("cardio2e/hvac/2/state/current_temperature", "None", True)]
+
+    def test_probe_queries_each_sensor_not_yet_absent(self, mqtt, serial_conn, app_state, monkeypatch):
+        app_state.mark_entity_absent("T", 3)
+        queried = []
+        monkeypatch.setattr(
+            cardio2e_listener, "_get_entity_state",
+            lambda s, m, eid, etype, cfg, st, quiet=False: queried.append((etype, eid)),
+        )
+        cardio2e_listener.probe_temperature_sensors(serial_conn, mqtt, AppConfig(), app_state, [1, 2, 3])
+        assert queried == [("T", 1), ("T", 2)]
+
+    def test_other_nack_does_not_mark(self, mqtt, serial_conn, app_state, caplog):
+        serial_conn.feed(b"@N T 2 3\r")
+        cardio2e_listener._get_entity_state(serial_conn, mqtt, 2, "T", AppConfig(), app_state)
+        assert not app_state.is_entity_absent("T", 2)
+        assert mqtt.messages == []
+        assert [r for r in caplog.records if r.levelno == logging.WARNING]
+
+    def test_nack_for_another_id_does_not_mark(self, mqtt, serial_conn, app_state):
+        serial_conn.feed(b"@N T 3 2\r")
+        cardio2e_listener._get_entity_state(serial_conn, mqtt, 2, "T", AppConfig(), app_state)
+        assert not app_state.is_entity_absent("T", 2)
+        assert not app_state.is_entity_absent("T", 3)
+
+    def test_out_of_range_for_other_types_does_not_mark(self, mqtt, serial_conn, app_state):
+        serial_conn.feed(b"@N L 2 2\r")
+        cardio2e_listener._get_entity_state(serial_conn, mqtt, 2, "L", AppConfig(), app_state)
+        assert not app_state.is_entity_absent("L", 2)
+
+    def test_reading_still_published(self, mqtt, serial_conn, app_state):
+        serial_conn.feed(b"@I T 1 21.69 O\r")
+        assert cardio2e_listener._get_entity_state(serial_conn, mqtt, 1, "T", AppConfig(), app_state) == "21.69"
+        assert not app_state.is_entity_absent("T", 1)
+
+    def test_sync_skips_absent_sensors(self, mqtt, serial_conn, app_state, monkeypatch):
+        for hvac_id in (1, 2, 3):
+            app_state.register_entity("H", hvac_id)
+        app_state.mark_entity_absent("T", 2)
+        queried = []
+        monkeypatch.setattr(
+            cardio2e_listener, "_get_entity_state",
+            lambda s, m, eid, etype, cfg, st, quiet=False: queried.append((etype, eid)),
+        )
+        cardio2e_listener._sync_all_entities(serial_conn, mqtt, AppConfig(), app_state)
+        assert [eid for etype, eid in queried if etype == "T"] == [1, 3]
+        assert [eid for etype, eid in queried if etype == "H"] == [1, 2, 3]
+
+
 class TestGetEntityStateHvac:
     def test_unknown_mode_code_uses_lowercase_fallback(self, mqtt, serial_conn, app_state):
         # Must match process_update's fallback ("unknown"), otherwise the same

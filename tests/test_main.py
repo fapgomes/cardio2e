@@ -40,6 +40,26 @@ class TestLoginFailure:
         assert listened == []
 
 
+class TestLoginTemperatureProbe:
+    def test_sensors_probed_before_login_states_are_published(self, mqtt, serial_conn, app_state, monkeypatch):
+        # The login reports 0.00 for HVAC zones without a sensor: those are
+        # found (and their readings ignored) before the login is parsed
+        response = "@A P 1\r@I H 1 20.00 23.00 S H\r@I H 2 20.00 23.00 S H\r@I T 1 21.03 O\r@I T 2 0.00 O\r@I P E\r"
+        calls = []
+        monkeypatch.setattr(cardio2e, "login", lambda conn, pw: response)
+        monkeypatch.setattr(cardio2e, "probe_temperature_sensors",
+                            lambda s, m, cfg, st, ids: calls.append(("probe", ids)))
+        monkeypatch.setattr(cardio2e, "parse_login_response",
+                            lambda resp, m, s, cfg, st: calls.append(("parse", resp)))
+        monkeypatch.setattr(cardio2e.cardio2e_covers, "initialize_entity_cover", lambda *a, **k: None)
+        monkeypatch.setattr(cardio2e, "get_name", lambda *a, **k: None)
+        monkeypatch.setattr(cardio2e.cardio2e_scenarios, "initialize_scenarios", lambda *a, **k: None)
+
+        cardio2e._do_login_and_init(serial_conn, mqtt, AppConfig(), app_state)
+
+        assert calls == [("probe", [1, 2]), ("parse", response)]
+
+
 class TestSyslog:
     def test_setup_syslog_uses_stdlib_handler(self):
         handler = cardio2e._setup_syslog("127.0.0.1", 5514)

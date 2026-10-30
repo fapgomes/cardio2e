@@ -146,6 +146,10 @@ def process_temp_update(mqtt_client, message_parts, app_state):
     match = re.match(r"@I T (\d+) (-?\d+\.?\d*) ([HCO])", " ".join(message_parts) if isinstance(message_parts, list) else message_parts)
     if match:
         temp_sensor_id, temp_value, temp_status = match.groups()
+        if app_state.is_entity_absent("T", temp_sensor_id):
+            # The login reports 0.00 for HVAC zones without a sensor
+            _LOGGER.debug("Ignoring reading of missing temperature sensor %s: %s", temp_sensor_id, temp_value)
+            return
         temp_status_value = TEMP_CODE_TO_STATUS.get(temp_status, "unknown")
         with app_state.lock:
             hvac_states = app_state.hvac_states

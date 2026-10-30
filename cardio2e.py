@@ -3,6 +3,7 @@
 import logging
 import logging.handlers
 import os
+import re
 import signal
 import threading
 
@@ -14,7 +15,7 @@ from cardio2e_modules.cardio2e_mqtt import (
     subscribe_after_init, suspend_commands, set_serial_conn, set_settings_manager,
 )
 from cardio2e_modules.cardio2e_serial import login, logout, query_name
-from cardio2e_modules.cardio2e_listener import listen_for_updates, _get_entity_state
+from cardio2e_modules.cardio2e_listener import listen_for_updates, probe_temperature_sensors, _get_entity_state
 from cardio2e_modules.cardio2e_autodiscovery import publish_config as publish_autodiscovery_config
 from cardio2e_modules.cardio2e_memory import MemoryService
 from cardio2e_modules.cardio2e_settings import SettingsManager, remove_entities as remove_settings_entities
@@ -171,6 +172,11 @@ def _do_login_and_init(serial_conn, mqtt_client, cfg, app_state):
     response = login(serial_conn, cfg.password)
     if not response:
         raise LoginFailed("cardio2e did not accept the login")
+
+    # The login reports a reading (0.00) for HVAC zones without a temperature
+    # sensor; find those before the readings are published
+    sensor_ids = [int(i) for i in re.findall(r"@I T (\d+) ", response)]
+    probe_temperature_sensors(serial_conn, mqtt_client, cfg, app_state, sensor_ids)
 
     parse_login_response(response, mqtt_client, serial_conn, cfg, app_state)
     cardio2e_covers.initialize_entity_cover(

@@ -88,6 +88,7 @@ class AppState(object):
         self._hvac_states = {}
         self._bypass_states = ""
         self._known_entities = set()  # {(entity_type, entity_id)} seen on the bus
+        self._absent_entities = set()  # {(entity_type, entity_id)} the controller says do not exist
         self._entity_names = {}  # {(entity_type, entity_id): name}
         self._entity_states = {}  # {(entity_type, entity_id): last_known_state}
         self._entity_update_times = {}  # {(entity_type, entity_id): monotonic time of last @I}
@@ -167,6 +168,22 @@ class AppState(object):
         whether its name was fetched. Known ids drive the periodic sync."""
         with self._lock:
             self._known_entities.add((entity_type, int(entity_id)))
+
+    def mark_entity_absent(self, entity_type, entity_id):
+        """Record that the controller rejected the entity as out of range
+        (``@N <type> <id> 2``), so the periodic sync stops querying it.
+        Returns True if it was not marked yet."""
+        key = (entity_type, int(entity_id))
+        with self._lock:
+            if key in self._absent_entities:
+                return False
+            self._absent_entities.add(key)
+            return True
+
+    def is_entity_absent(self, entity_type, entity_id):
+        """True if the controller said the entity does not exist."""
+        with self._lock:
+            return (entity_type, int(entity_id)) in self._absent_entities
 
     def set_entity_name(self, entity_type, entity_id, name):
         """Store the friendly name of an entity (and mark it as known)."""

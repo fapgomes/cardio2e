@@ -19,6 +19,14 @@ class TestProcessTempUpdate:
         assert mqtt.payload_for("cardio2e/hvac/2/state/current_temperature") == "19.0"
 
 
+    def test_missing_sensor_reading_is_ignored(self, mqtt, app_state):
+        # The login reports 0.00 for HVAC zones without a temperature sensor
+        app_state.mark_entity_absent("T", 2)
+        cardio2e_hvac.process_temp_update(mqtt, "@I T 2 0.00 O", app_state)
+        assert mqtt.messages == []
+        assert 2 not in app_state.hvac_states
+
+
 class TestProcessLogin:
     def test_registers_id_without_name_fetch(self, mqtt, serial_conn, app_state):
         cfg = AppConfig(fetch_names_hvac=False)
