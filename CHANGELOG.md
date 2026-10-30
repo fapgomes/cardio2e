@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.6.2 - 2026-10-30
+
+### Fixes
+- Temperature sensors the controller does not have are no longer queried and no longer show 0 °C. The login reports a reading for every HVAC zone (`0.00` for zones without a sensor), but `@G T <id>` for those is rejected as out of range (`@N T <id> 2`), so every sync logged two warnings per zone and Home Assistant showed 0 °C. Each sensor is now queried once at login, before the login states are published; one rejected as out of range is logged once at INFO, its readings are ignored, its current temperature is cleared (`None`) and the periodic sync skips it.
+
 ## v2.6.1 - 2026-10-29
 
 ### Fixes
