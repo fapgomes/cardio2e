@@ -1,5 +1,10 @@
 # Changelog
 
+## v2.6.3 - 2026-11-01
+
+### Fixes
+- Zone and bypass frames garbled on the serial line are discarded instead of published. Opening several covers at once garbled an `@I Z` frame into `CNCCCCCCCCOOCCI` (15 chars instead of 16, last bytes altered); each character was mapped to its position without checking, so the inverted zones 13 and 14 were published as ON and the flood zone raised a false alarm in Home Assistant, although the correct frame arrived in the same second. Zone states are now accepted only as exactly 16 `C`/`O`/`N`/`E` characters and bypass states as exactly 16 `N`/`Y`, in updates, the login response and query replies; anything else is logged as a warning and dropped. A garbled bypass frame no longer reaches the bypass cache, which is written back to the controller on the next bypass command and would have changed the real bypass of other zones.
+
 ## v2.6.2 - 2026-10-30
 
 ### Fixes
