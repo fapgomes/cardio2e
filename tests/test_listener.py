@@ -148,6 +148,23 @@ class TestAckWithoutUpdateRequery:
         assert not t.is_alive()
 
 
+class TestGetEntityStateZones:
+    def test_valid_reply_is_published(self, mqtt, serial_conn, app_state):
+        serial_conn.feed(b"@I Z 1 CNCNCCCCCCOOOOCC\r")
+        cfg = AppConfig(zones_normal_as_off=[11, 12, 13, 14])
+        state = cardio2e_listener._get_entity_state(serial_conn, mqtt, 1, "Z", cfg, app_state)
+        assert state == "CNCNCCCCCCOOOOCC"
+        assert mqtt.payload_for("cardio2e/zone/state/14") == "OFF"
+        assert mqtt.payload_for("cardio2e/zone/state/2") == "ON"
+
+    def test_garbled_reply_is_discarded(self, mqtt, serial_conn, app_state):
+        serial_conn.feed(b"@I Z 1 CNCCCCCCCCOOCCI\r")
+        cfg = AppConfig(zones_normal_as_off=[11, 12, 13, 14])
+        state = cardio2e_listener._get_entity_state(serial_conn, mqtt, 1, "Z", cfg, app_state)
+        assert state is None
+        assert not any(t.startswith("cardio2e/zone/state/") for t in mqtt.topics())
+
+
 class TestGetEntityStateLight:
     def test_dimmer_republishes_brightness(self, mqtt, serial_conn, app_state):
         serial_conn.feed(b"@I L 5 40\r")

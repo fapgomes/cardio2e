@@ -7,8 +7,32 @@ from .cardio2e_serial import send_command
 
 _LOGGER = logging.getLogger(__name__)
 
-# The controller reports bypass as a fixed-width string of 16 zones.
+# The controller reports zone states and bypass as fixed-width strings of 16 zones.
 NUM_ZONES = 16
+
+_VALID_ZONE_STATES = re.compile(rf"[CONE]{{{NUM_ZONES}}}")
+_VALID_BYPASS_STATES = re.compile(rf"[NY]{{{NUM_ZONES}}}")
+
+
+def valid_zone_states(states):
+    """Return True if ``states`` is a well-formed 16-zone state string.
+
+    A frame garbled on the RS-232 line (bytes dropped or altered, e.g.
+    ``CNCCCCCCCCOOCCI``) shifts or corrupts the positions, so every zone after
+    the damage would get another zone's state. Such frames must be discarded:
+    the controller repeats the correct one moments later.
+    """
+    return bool(_VALID_ZONE_STATES.fullmatch(states))
+
+
+def valid_bypass_states(states):
+    """Return True if ``states`` is a well-formed 16-zone bypass string.
+
+    The bypass cache is written back to the controller on the next bypass
+    command (``@S B 1 <states>``), so a garbled frame must never reach it:
+    it would change the real bypass of other zones, not just their display.
+    """
+    return bool(_VALID_BYPASS_STATES.fullmatch(states))
 
 
 def interpret_zone_character(character, zone_id, zones_normal_as_off):
@@ -70,7 +94,7 @@ def handle_bypass_command(serial_conn, mqtt_client, topic, payload, app_state):
     with app_state.lock:
         _LOGGER.info("Current Zones: %s", app_state.bypass_states)
 
-        if not app_state.bypass_states or len(app_state.bypass_states) != NUM_ZONES:
+        if not app_state.bypass_states or not valid_bypass_states(app_state.bypass_states):
             _LOGGER.error("Failed to get current state of zones. Using default state.")
             app_state.bypass_states = "N" * NUM_ZONES
 
@@ -109,6 +133,9 @@ def handle_bypass_command(serial_conn, mqtt_client, topic, payload, app_state):
 def process_zone_update(mqtt_client, message_parts, config, app_state):
     """Process an @I Z update from the serial listener."""
     zone_states = message_parts[3]
+    if len(message_parts) != 4 or not valid_zone_states(zone_states):
+        _LOGGER.warning("Discarding garbled zone update: %s", " ".join(message_parts))
+        return
 
     for zone_id in range(1, len(zone_states) + 1):
         zone_state_char = zone_states[zone_id - 1]
@@ -125,6 +152,9 @@ def process_zone_update(mqtt_client, message_parts, config, app_state):
 def process_bypass_update(mqtt_client, message_parts, app_state):
     """Process an @I B update from the serial listener."""
     states = message_parts[3]
+    if len(message_parts) != 4 or not valid_bypass_states(states):
+        _LOGGER.warning("Discarding garbled bypass update: %s", " ".join(message_parts))
+        return
     with app_state.lock:
         app_state.bypass_states = states
     publish_bypass_states(mqtt_client, states)
@@ -132,7 +162,10 @@ def process_bypass_update(mqtt_client, message_parts, app_state):
 
 def process_login_zones(mqtt_client, message, serial_conn, config, get_name_fn):
     """Process @I Z messages from the login response."""
-    match = re.match(r"@I Z \d+ ([CONE]+)", message)
+    match = re.match(r"@I Z \d+ (\S+)\s*$", message)
+    if match and not valid_zone_states(match.group(1)):
+        _LOGGER.warning("Discarding garbled zone states on login: %s", message)
+        return
     if match:
         zone_states = match.group(1)
         for i, state_char in enumerate(zone_states, start=1):
@@ -147,7 +180,10 @@ def process_login_zones(mqtt_client, message, serial_conn, config, get_name_fn):
 
 def process_login_bypass(mqtt_client, message, app_state):
     """Process @I B messages from the login response."""
-    match = re.match(r"@I B \d+ ([NY]+)", message)
+    match = re.match(r"@I B \d+ (\S+)\s*$", message)
+    if match and not valid_bypass_states(match.group(1)):
+        _LOGGER.warning("Discarding garbled bypass states on login: %s", message)
+        return
     if match:
         states = match.group(1)
         with app_state.lock:

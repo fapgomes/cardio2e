@@ -500,6 +500,9 @@ def _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, 
 
     elif entity_type == "Z" and len(message_parts) >= 4:
         zone_states = message_parts[3]
+        if len(message_parts) != 4 or not cardio2e_zones.valid_zone_states(zone_states):
+            _LOGGER.warning("Discarding garbled zone state reply: %s", " ".join(message_parts))
+            return None
         for zone_id in range(1, len(zone_states) + 1):
             zone_state = cardio2e_zones.interpret_zone_character(zone_states[zone_id - 1], zone_id, config.zones_normal_as_off)
             mqtt_client.publish(f"cardio2e/zone/state/{zone_id}", zone_state, retain=True)
@@ -507,6 +510,9 @@ def _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, 
 
     elif entity_type == "B" and len(message_parts) >= 4:
         states = message_parts[3]
+        if len(message_parts) != 4 or not cardio2e_zones.valid_bypass_states(states):
+            _LOGGER.warning("Discarding garbled bypass state reply: %s", " ".join(message_parts))
+            return None
         for zone_id in range(1, len(states) + 1):
             bypass_state = cardio2e_zones.interpret_bypass_character(states[zone_id - 1])
             mqtt_client.publish(f"cardio2e/zone/bypass/state/{zone_id}", bypass_state, retain=True)

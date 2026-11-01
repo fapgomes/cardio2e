@@ -5,42 +5,108 @@ import pytest
 from cardio2e_modules import cardio2e_zones
 from cardio2e_modules.cardio2e_config import AppConfig
 
+# Real frames from the production log (2026-11-01 09:06:13): a normal one and
+# one garbled on the wire (15 chars, last bytes altered).
+NORMAL = "CNCNCCCCCCOOOOCC"
+GARBLED = "CNCCCCCCCCOOCCI"
+BYPASS = "NY" + "N" * 14
+
 
 class TestProcessLoginZones:
     def test_publishes_each_zone_state(self, mqtt, serial_conn):
         cfg = AppConfig(fetch_zone_names=False, zones_normal_as_off=[])
-        cardio2e_zones.process_login_zones(mqtt, "@I Z 1 ONCE", serial_conn, cfg, lambda *a: None)
+        cardio2e_zones.process_login_zones(
+            mqtt, "@I Z 1 ONCE" + "C" * 12, serial_conn, cfg, lambda *a: None
+        )
         assert mqtt.payload_for("cardio2e/zone/state/1") == "ON"   # O
         assert mqtt.payload_for("cardio2e/zone/state/2") == "ON"   # N
         assert mqtt.payload_for("cardio2e/zone/state/3") == "OFF"  # C
         assert mqtt.payload_for("cardio2e/zone/state/4") == "ERROR"  # E
+        assert mqtt.payload_for("cardio2e/zone/state/16") == "OFF"
+
+    @pytest.mark.parametrize("states", [GARBLED, "CCCCCCCCCCOOOOCCC", "CCCCCCCCCCOOOOCX"])
+    def test_garbled_states_are_discarded(self, mqtt, serial_conn, states):
+        cfg = AppConfig(fetch_zone_names=False, zones_normal_as_off=[11, 12, 13, 14])
+        cardio2e_zones.process_login_zones(
+            mqtt, f"@I Z 1 {states}", serial_conn, cfg, lambda *a: None
+        )
+        assert mqtt.messages == []
 
 
 class TestProcessZoneUpdate:
     def test_publishes_states(self, mqtt, app_state):
         cfg = AppConfig(zones_normal_as_off=[])
-        cardio2e_zones.process_zone_update(mqtt, ["@I", "Z", "1", "ON"], cfg, app_state)
+        cardio2e_zones.process_zone_update(mqtt, ["@I", "Z", "1", "ON" + "C" * 14], cfg, app_state)
         assert mqtt.payload_for("cardio2e/zone/state/1") == "ON"
+        assert mqtt.payload_for("cardio2e/zone/state/2") == "ON"
+        assert mqtt.payload_for("cardio2e/zone/state/16") == "OFF"
+
+    def test_garbled_frame_does_not_trigger_inverted_zones(self, mqtt, app_state):
+        # Regression (2026-11-01): opening the living-room covers garbled one
+        # @I Z frame into 15 chars; the shifted "C"s were published as ON for
+        # the inverted zones 13 and 14 (flood sensor), raising a false alarm.
+        cfg = AppConfig(zones_normal_as_off=[11, 12, 13, 14])
+        cardio2e_zones.process_zone_update(mqtt, ["@I", "Z", "1", GARBLED], cfg, app_state)
+        assert mqtt.messages == []
+
+    @pytest.mark.parametrize("parts", [
+        ["@I", "Z", "1", "CCCCCCCCCCOOOOCCC"],         # too long
+        ["@I", "Z", "1", "CCCCCCCCCCOOOOCX"],          # invalid character
+        ["@I", "Z", "1", "CCCCCCCCCCOOOOCC", "junk"],  # trailing garbage
+    ])
+    def test_malformed_frames_are_discarded(self, mqtt, app_state, parts):
+        cfg = AppConfig(zones_normal_as_off=[])
+        cardio2e_zones.process_zone_update(mqtt, parts, cfg, app_state)
+        assert mqtt.messages == []
+
+    def test_valid_frame_after_garbled_one_is_published(self, mqtt, app_state):
+        cfg = AppConfig(zones_normal_as_off=[11, 12, 13, 14])
+        cardio2e_zones.process_zone_update(mqtt, ["@I", "Z", "1", GARBLED], cfg, app_state)
+        cardio2e_zones.process_zone_update(mqtt, ["@I", "Z", "1", NORMAL], cfg, app_state)
+        assert mqtt.payload_for("cardio2e/zone/state/14") == "OFF"
         assert mqtt.payload_for("cardio2e/zone/state/2") == "ON"
 
 
 class TestProcessLoginBypass:
     def test_sets_state_and_publishes(self, mqtt, app_state):
-        cardio2e_zones.process_login_bypass(mqtt, "@I B 1 NYNN", app_state)
-        assert app_state.bypass_states == "NYNN"
+        cardio2e_zones.process_login_bypass(mqtt, "@I B 1 " + BYPASS, app_state)
+        assert app_state.bypass_states == BYPASS
         assert mqtt.payload_for("cardio2e/zone/bypass/state/1") == "OFF"
         assert mqtt.payload_for("cardio2e/zone/bypass/state/2") == "ON"
+        assert mqtt.payload_for("cardio2e/zone/bypass/state/16") == "OFF"
+
+    @pytest.mark.parametrize("states", ["NYNNNNNNNNNNNNN", "NYNNNNNNNNNNNNNNN", "NYNNNNNNNNNNNNNI"])
+    def test_garbled_states_are_discarded(self, mqtt, app_state, states):
+        app_state.bypass_states = "N" * 16
+        cardio2e_zones.process_login_bypass(mqtt, f"@I B 1 {states}", app_state)
+        assert app_state.bypass_states == "N" * 16
+        assert mqtt.messages == []
 
 
 class TestProcessBypassUpdate:
     def test_publishes(self, mqtt, app_state):
-        cardio2e_zones.process_bypass_update(mqtt, ["@I", "B", "1", "NY"], app_state)
+        cardio2e_zones.process_bypass_update(mqtt, ["@I", "B", "1", BYPASS], app_state)
         assert mqtt.payload_for("cardio2e/zone/bypass/state/1") == "OFF"
         assert mqtt.payload_for("cardio2e/zone/bypass/state/2") == "ON"
+        assert mqtt.payload_for("cardio2e/zone/bypass/state/16") == "OFF"
 
     def test_updates_cache(self, mqtt, app_state):
-        cardio2e_zones.process_bypass_update(mqtt, ["@I", "B", "1", "NYNN"], app_state)
-        assert app_state.bypass_states == "NYNN"
+        cardio2e_zones.process_bypass_update(mqtt, ["@I", "B", "1", BYPASS], app_state)
+        assert app_state.bypass_states == BYPASS
+
+    @pytest.mark.parametrize("parts", [
+        ["@I", "B", "1", "NYNNNNNNNNNNNNN"],           # too short (byte lost)
+        ["@I", "B", "1", "NYNNNNNNNNNNNNNNN"],         # too long
+        ["@I", "B", "1", "NYNNNNNNNNNNNNNI"],          # invalid character
+        ["@I", "B", "1", BYPASS, "junk"],              # trailing garbage
+    ])
+    def test_garbled_frame_is_discarded(self, mqtt, app_state, parts):
+        # The cache is sent back to the controller on the next bypass command,
+        # so a garbled frame must neither be published nor cached.
+        app_state.bypass_states = "N" * 16
+        cardio2e_zones.process_bypass_update(mqtt, parts, app_state)
+        assert app_state.bypass_states == "N" * 16
+        assert mqtt.messages == []
 
 
 class TestHandleBypassCommand:
@@ -65,6 +131,17 @@ class TestHandleBypassCommand:
         assert mqtt.payload_for("cardio2e/zone/bypass/state/2") == "ON"
         assert mqtt.payload_for("cardio2e/zone/bypass/state/1") == "OFF"
         assert all("@G B" not in w for w in serial_conn.written_str())
+
+    def test_invalid_cache_is_not_sent_to_controller(self, serial_conn, mqtt, app_state):
+        # A cache with invalid characters must not be written back to the
+        # controller as is.
+        app_state.bypass_states = "NNNNNNNNNNNNNNNI"
+        cardio2e_zones.handle_bypass_command(
+            serial_conn, mqtt, "cardio2e/zone/bypass/set/1", "ON", app_state
+        )
+        written = serial_conn.last_written_str()
+        states = written[len("@S B 1 "):].rstrip("\r")
+        assert states == "Y" + "N" * 15
 
     def test_defaults_when_state_missing(self, serial_conn, mqtt, app_state):
         app_state.bypass_states = ""
