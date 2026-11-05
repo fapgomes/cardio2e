@@ -1,5 +1,11 @@
 # Changelog
 
+## v2.6.4 - 2026-11-05
+
+### Fixes
+- Identical HVAC commands are no longer sent twice. Home Assistant's `climate.turn_off` published two set messages that both became `@S H 1 30.0 32.0 S O`; on a busy line (a burst of zone updates) the ack came late, the bridge re-sent the command, one of the copies was garbled and the controller answered `@N H 1 3`, although the zone did turn off. A command equal to the last one sent to the zone less than 2 s earlier is now skipped, unless the controller reported a different state for the zone in between.
+- A NACK to a light, relay or HVAC command sent in the last 5 s is no longer published straight to the error sensor. It is held for the retry window (~3 s) and only published if neither the `@A` ack nor an `@I` with the requested state arrived; otherwise it is logged as a warning. NACKs not tied to a recent command are published at once, as before, and every NACK still counts in the diagnostics.
+
 ## v2.6.3 - 2026-11-01
 
 ### Fixes
