@@ -12,6 +12,44 @@ from .cardio2e_serial import send_command
 
 _LOGGER = logging.getLogger(__name__)
 
+# Home Assistant can publish several MQTT set messages for one user action
+# (e.g. climate.turn_off), each producing the same full @S H frame. An
+# identical command sent again within this window, with no @I update from
+# the zone in between, is not re-sent: extra frames on a busy line are what
+# gets garbled and NACKed by the controller.
+DUPLICATE_COMMAND_WINDOW = 2.0  # seconds
+
+
+def _is_duplicate_command(app_state, hvac_id, command, now):
+    """True if ``command`` repeats the last one sent to this zone less than
+    ``DUPLICATE_COMMAND_WINDOW`` seconds ago and the controller has not
+    reported a different state since (any @I of the zone after the send
+    that did not confirm the command)."""
+    last = app_state.last_command("H", hvac_id)
+    if last is None:
+        return False
+    value, sent_at = last
+    if value != command or now - sent_at >= DUPLICATE_COMMAND_WINDOW:
+        return False
+    updated_at = app_state.last_entity_update("H", hvac_id)
+    if updated_at is not None and updated_at >= sent_at and not app_state.command_confirmed("H", hvac_id):
+        return False
+    return True
+
+
+def command_matches_state(command, state):
+    """True if an HVAC zone state (as kept in ``hvac_states``) is the one an
+    @S H command asked for. The heating setpoint is derived from the cooling
+    one, so it is not compared."""
+    try:
+        return (
+            float(state.get("cooling_setpoint")) == float(command["cooling_setpoint"])
+            and state.get("fan") == command["fan_state"]
+            and state.get("mode") == command["mode"]
+        )
+    except (TypeError, ValueError, KeyError):
+        return False
+
 
 
 def initialize_hvac_state(hvac_states, hvac_id, heating_setpoint, cooling_setpoint, fan_state, system_mode):
@@ -84,11 +122,16 @@ def handle_set_command(serial_conn, mqtt_client, topic, payload, app_state):
             "fan_state": fan_state,
             "mode": mode,
         }
+        now = time.monotonic()
+        if _is_duplicate_command(app_state, hvac_id, command, now):
+            _LOGGER.info("HVAC %d: same command sent %.2fs ago; not re-sending %s",
+                         hvac_id, now - app_state.last_command("H", hvac_id)[1], command)
+            return
         send_command(serial_conn, "H", hvac_id, **command)
         # Re-sent once by the housekeeping loop if the controller never acks
         # it (frame garbled on the wire). The command sets every parameter
         # of the zone, so a duplicate is harmless.
-        app_state.schedule_command_retry("H", hvac_id, command, time.monotonic())
+        app_state.schedule_command_retry("H", hvac_id, command, now)
 
         with app_state.lock:
             hvac_states = app_state.hvac_states

@@ -94,6 +94,9 @@ class AppState(object):
         self._entity_update_times = {}  # {(entity_type, entity_id): monotonic time of last @I}
         self._pending_ack_checks = {}  # {(entity_type, entity_id): (ack_time, due_at)}
         self._pending_command_retries = {}  # {(entity_type, entity_id): (value, sent_at)}
+        self._last_commands = {}  # {(entity_type, entity_id): (value, sent_at)} last @S sent
+        self._command_confirmations = {}  # {(entity_type, entity_id): monotonic time}
+        self._pending_nack_reports = {}  # {(entity_type, entity_id): (error, nack_time, due_at)}
         # Diagnostics counters (atomic increments via lock)
         self._messages_processed = 0
         self._errors_count = 0
@@ -257,6 +260,50 @@ class AppState(object):
         one (latest value wins)."""
         with self._lock:
             self._pending_command_retries[(entity_type, int(entity_id))] = (value, sent_at)
+            self._last_commands[(entity_type, int(entity_id))] = (value, sent_at)
+
+    def last_command(self, entity_type, entity_id):
+        """Return ``(value, sent_at)`` of the last @S command sent to an
+        entity (light, relay or HVAC), or None."""
+        with self._lock:
+            return self._last_commands.get((entity_type, int(entity_id)))
+
+    def record_command_confirmation(self, entity_type, entity_id, when=None):
+        """Stamp the time the controller confirmed the last command of an
+        entity: its @A ack, or an @I update showing the requested state."""
+        with self._lock:
+            self._command_confirmations[(entity_type, int(entity_id))] = (
+                time.monotonic() if when is None else when
+            )
+
+    def command_confirmed(self, entity_type, entity_id):
+        """True if the last command sent to the entity was confirmed after
+        it was sent."""
+        with self._lock:
+            key = (entity_type, int(entity_id))
+            last = self._last_commands.get(key)
+            confirmed_at = self._command_confirmations.get(key)
+            return last is not None and confirmed_at is not None and confirmed_at >= last[1]
+
+    def schedule_nack_report(self, entity_type, entity_id, error, nack_time, due_at):
+        """Hold back the report of a NACK to one of our commands until
+        ``due_at``, so a retry or the controller's own @I can show that the
+        requested state was reached anyway."""
+        with self._lock:
+            self._pending_nack_reports[(entity_type, int(entity_id))] = (error, nack_time, due_at)
+
+    def pop_due_nack_reports(self, now):
+        """Remove and return the held NACK reports due at `now` as a list
+        of (entity_type, entity_id, error) tuples."""
+        with self._lock:
+            due = [
+                (etype, eid, error)
+                for (etype, eid), (error, _nack_time, due_at) in self._pending_nack_reports.items()
+                if due_at <= now
+            ]
+            for etype, eid, _ in due:
+                del self._pending_nack_reports[(etype, eid)]
+            return due
 
     def clear_command_retry(self, entity_type, entity_id):
         """Drop the pending retry of an entity: its @A ack arrived."""

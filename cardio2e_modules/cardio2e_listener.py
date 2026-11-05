@@ -40,6 +40,10 @@ ACK_FOLLOWUP_DELAY = 2.0  # seconds
 # wire and re-sent once (see _run_due_command_retries).
 COMMAND_ACK_TIMEOUT = 1.0  # seconds
 
+# A NACK naming an entity we sent an @S command to within this many seconds
+# is taken as a NACK to that command (see _hold_nack_report).
+NACK_REPORT_COMMAND_AGE = 5.0  # seconds
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -104,6 +108,75 @@ def _schedule_nack_verification(app_state, entity_type, entity_id):
     app_state.schedule_ack_check(
         entity_type, entity_id, now, now + COMMAND_ACK_TIMEOUT + ACK_FOLLOWUP_DELAY
     )
+
+
+def _command_confirmed_by_update(app_state, entity_type, entity_id, message_parts):
+    """True if an @I update shows the state our last command to the entity
+    asked for. Called after the update was processed, so for HVAC the zone
+    state in ``app_state.hvac_states`` is already the reported one."""
+    last = app_state.last_command(entity_type, entity_id)
+    if last is None:
+        return False
+    value = last[0]
+    try:
+        if entity_type == "L":
+            return int(message_parts[3]) == int(value)
+        if entity_type == "R":
+            return message_parts[3] == value
+        if entity_type == "H":
+            with app_state.lock:
+                state = dict(app_state.hvac_states.get(entity_id, {}))
+            return cardio2e_hvac.command_matches_state(value, state)
+    except (ValueError, IndexError, TypeError):
+        return False
+    return False
+
+
+def _hold_nack_report(app_state, entity_type, entity_id, error_msg, now=None):
+    """Hold back the error report of a NACK to one of our own recent L/R/H
+    commands. Returns False (report now) for any other NACK.
+
+    A busy line (e.g. a burst of zone updates) garbles one copy of a command
+    while another copy, or the retry, goes through: the controller NACKs the
+    bad frame and then reports the requested state. Reporting such a NACK
+    leaves a scary error on the dashboard for an action that worked. The
+    report is decided once the retry and its @I have had time to arrive
+    (see ``_run_due_nack_reports``)."""
+    if entity_type not in ("L", "R", "H"):
+        return False
+    last = app_state.last_command(entity_type, entity_id)
+    if now is None:
+        now = time.monotonic()
+    if last is None or now - last[1] > NACK_REPORT_COMMAND_AGE:
+        return False
+    app_state.schedule_nack_report(
+        entity_type, entity_id, error_msg, now, now + COMMAND_ACK_TIMEOUT + ACK_FOLLOWUP_DELAY
+    )
+    return True
+
+
+def _run_due_nack_reports(mqtt_client, app_state, now=None):
+    """Report the held NACKs whose command was not confirmed after all; only
+    log the ones the controller resolved (ack or @I with the requested
+    state)."""
+    if now is None:
+        now = time.monotonic()
+    for entity_type, entity_id, error_msg in app_state.pop_due_nack_reports(now):
+        if app_state.command_confirmed(entity_type, entity_id):
+            _LOGGER.warning(
+                "NACK for %s %d resolved: the controller reached the requested state; not reported (%s).",
+                entity_type, entity_id, error_msg,
+            )
+            continue
+        cardio2e_errors.report_error_state(mqtt_client, error_msg)
+
+
+def _record_update_confirmation(app_state, entity_type, message_parts):
+    """Mark the last command of an entity as confirmed when its @I update
+    shows the requested state."""
+    entity_id = int(message_parts[2])
+    if _command_confirmed_by_update(app_state, entity_type, entity_id, message_parts):
+        app_state.record_command_confirmation(entity_type, entity_id)
 
 
 def _run_due_ack_verifications(serial_conn, mqtt_client, config, app_state, now=None):
@@ -304,6 +377,9 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state, shutdown_eve
             # Re-send light/relay commands that got no @A ack
             _run_due_command_retries(serial_conn, app_state, now)
 
+            # Report NACKs to our commands that the controller did not resolve
+            _run_due_nack_reports(mqtt_client, app_state, now)
+
             # Re-query entities whose @A ack was not followed by an @I update
             _run_due_ack_verifications(serial_conn, mqtt_client, config, app_state, now)
 
@@ -355,14 +431,17 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
         if entity_type == "L":
             _LOGGER.info("OK for action %s", app_state.get_entity_label("light", "L", entity_id))
             app_state.clear_command_retry("L", entity_id)
+            app_state.record_command_confirmation("L", entity_id)
             _schedule_ack_verification(app_state, "L", entity_id)
         elif entity_type == "R":
             _LOGGER.info("OK for action %s", app_state.get_entity_label("switch", "R", entity_id))
             app_state.clear_command_retry("R", entity_id)
+            app_state.record_command_confirmation("R", entity_id)
             _schedule_ack_verification(app_state, "R", entity_id)
         elif entity_type == "H":
             _LOGGER.info("OK for action %s", app_state.get_entity_label("HVAC", "H", entity_id))
             app_state.clear_command_retry("H", entity_id)
+            app_state.record_command_confirmation("H", entity_id)
             _schedule_ack_verification(app_state, "H", entity_id)
         elif entity_type == "C":
             _LOGGER.info("OK for action %s", app_state.get_entity_label("cover", "C", entity_id))
@@ -379,14 +458,18 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
     # NACK messages (@N)
     elif len(message_parts) >= 3 and message_parts[0] == "@N":
         error_msg = cardio2e_errors.format_error_message(message_parts)
-        cardio2e_errors.report_error_state(mqtt_client, error_msg)
         app_state.increment_errors()
         app_state.set_last_error(error_msg)
         _LOGGER.info("\n#######\nNACK from cardio with transaction %s: %s", msg, error_msg)
         # "@N <type> <id> <code>" identifies the rejected entity; a truncated
         # "@N <type> <code>" (id lost to garbling) identifies nothing.
         if len(message_parts) >= 4 and message_parts[2].isdigit():
-            _schedule_nack_verification(app_state, message_parts[1], int(message_parts[2]))
+            entity_type, entity_id = message_parts[1], int(message_parts[2])
+            _schedule_nack_verification(app_state, entity_type, entity_id)
+            if not _hold_nack_report(app_state, entity_type, entity_id, error_msg):
+                cardio2e_errors.report_error_state(mqtt_client, error_msg)
+        else:
+            cardio2e_errors.report_error_state(mqtt_client, error_msg)
 
     # Info/state update messages (@I)
     elif len(message_parts) >= 4 and message_parts[0] == "@I":
@@ -395,14 +478,17 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
         if entity_type == "L":
             app_state.record_entity_update("L", int(message_parts[2]))
             cardio2e_lights.process_update(mqtt_client, message_parts, config, app_state)
+            _record_update_confirmation(app_state, "L", message_parts)
         elif entity_type == "R":
             app_state.record_entity_update("R", int(message_parts[2]))
             cardio2e_switches.process_update(mqtt_client, message_parts, app_state)
+            _record_update_confirmation(app_state, "R", message_parts)
         elif entity_type == "C":
             cardio2e_covers.process_update(mqtt_client, message_parts, app_state)
         elif entity_type == "H":
             app_state.record_entity_update("H", int(message_parts[2]))
             cardio2e_hvac.process_update(mqtt_client, message_parts, app_state)
+            _record_update_confirmation(app_state, "H", message_parts)
         elif entity_type == "T":
             cardio2e_hvac.process_temp_update(mqtt_client, message_parts, app_state)
         elif entity_type == "S":
