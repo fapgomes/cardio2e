@@ -139,3 +139,24 @@ class TestCommandRetry:
             t.join(timeout=5)
         assert not t.is_alive()
         assert serial_conn.written_str().count("@S L 18 100\r") == 2
+
+
+class TestHvacRetryClockStartsAfterSend:
+    """A command can be held for seconds before it is written (memory mode,
+    see MEMORY_MODE_EXIT). The ack timeout must count from the moment it was
+    sent, like for lights and relays; counted from before, the retry was
+    already due when the send returned and the command went out twice."""
+
+    def test_sent_at_is_taken_after_the_send(self, mqtt, serial_conn, app_state, monkeypatch):
+        _init_hvac(app_state)
+        sent = []
+
+        def held_send(*args, **kwargs):
+            time.sleep(0.05)
+            sent.append(time.monotonic())
+            return True
+
+        monkeypatch.setattr(cardio2e_hvac, "send_command", held_send)
+        cardio2e_hvac.handle_set_command(serial_conn, mqtt, "cardio2e/hvac/2/set/mode", "cool", app_state)
+        assert app_state.last_command("H", 2)[1] >= sent[0]
+        assert app_state.pop_due_command_retries(sent[0] + 0.04, 0.05) == []

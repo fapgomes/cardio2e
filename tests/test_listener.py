@@ -404,3 +404,157 @@ class TestBulkSession:
             ev.set()
             t.join(timeout=5)
         assert calls.count("sync") == 1
+
+
+class TestGetEntityStateGarbledValue:
+    """A reply whose value was garbled on the wire (seen as ``@I L 130``,
+    ``1O0``...) is discarded. Raising here escaped the housekeeping loop and
+    made main() drop the serial connection and log in again."""
+
+    def test_garbled_light_value_is_discarded(self, mqtt, serial_conn, app_state):
+        serial_conn.feed(b"@I L 5 1O0\r")
+        state = cardio2e_listener._get_entity_state(serial_conn, mqtt, 5, "L", AppConfig(), app_state)
+        assert state is None
+        assert mqtt.messages == []
+
+    def test_sync_goes_on_after_a_garbled_reply(self, mqtt, serial_conn, app_state, monkeypatch):
+        app_state.register_entity("L", 5)
+        app_state.register_entity("R", 2)
+        replies = {
+            "Z": ["@I", "Z", "1", "C" * 16],
+            "S": ["@I", "S", "1", "D"],
+            "L": ["@I", "L", "5", "1O0"],
+            "R": ["@I", "R", "2", "O"],
+        }
+        monkeypatch.setattr(cardio2e_listener, "query_state", lambda s, eid, etype, **kw: replies[etype])
+        cardio2e_listener._sync_all_entities(serial_conn, mqtt, AppConfig(), app_state)
+        assert "cardio2e/light/state/5" not in mqtt.topics()
+        assert mqtt.payload_for("cardio2e/switch/state/2") == "ON"
+
+
+class TestGetEntityStateHvacGarbled:
+    def test_garbled_setpoint_is_discarded(self, mqtt, serial_conn, app_state):
+        # Seen on the wire: a zone frame spliced into the setpoint
+        app_state.hvac_states = {1: {"heating_setpoint": 20.0, "cooling_setpoint": 22.0, "fan": "off", "mode": "cool"}}
+        serial_conn.feed(b"@I H 1 5.0 C7.C0C S O\r")
+        state = cardio2e_listener._get_entity_state(serial_conn, mqtt, 1, "H", AppConfig(), app_state)
+        assert state is None
+        assert mqtt.messages == []
+        assert app_state.hvac_states[1]["cooling_setpoint"] == 22.0
+
+
+def _run_listener(serial_conn, mqtt, app_state, cfg):
+    ev = threading.Event()
+    t = threading.Thread(target=cardio2e_listener.listen_for_updates,
+                         args=(serial_conn, mqtt, cfg, app_state, ev), daemon=True)
+    t.start()
+    return t, ev
+
+
+class TestSyncRequest:
+    def test_requested_sync_runs_in_the_housekeeping_loop(self, mqtt, serial_conn, app_state, monkeypatch):
+        # e.g. after the MQTT broker came back: states published meanwhile were lost
+        synced = []
+        monkeypatch.setattr(cardio2e_listener, "_sync_all_entities", lambda *a: synced.append(1))
+        app_state.request_sync()
+        t, ev = _run_listener(serial_conn, mqtt, app_state, AppConfig(watchdog_interval=0))
+        try:
+            assert _wait_for(lambda: synced == [1])
+            assert not app_state.pop_sync_request()
+        finally:
+            ev.set()
+            t.join(timeout=3)
+
+
+class TestWatchdog:
+    """A controller that is switched off or restarted leaves the serial port
+    open and silent. After ``watchdog_interval`` seconds without a byte the
+    controller is probed; no answer at all means the connection is lost."""
+
+    def test_silent_controller_ends_the_listener(self, mqtt, serial_conn, app_state, monkeypatch):
+        probes = []
+        monkeypatch.setattr(cardio2e_listener, "query_state",
+                            lambda s, eid, etype, **kw: probes.append((etype, eid)))
+        t, ev = _run_listener(serial_conn, mqtt, app_state, AppConfig(watchdog_interval=0.05))
+        try:
+            t.join(timeout=3)
+            assert not t.is_alive()          # returned by itself: main() reconnects
+            assert probes == [("S", 1)]
+        finally:
+            ev.set()
+
+    def test_answering_controller_keeps_the_listener(self, mqtt, serial_conn, app_state, monkeypatch):
+        probes = []
+        monkeypatch.setattr(cardio2e_listener, "query_state",
+                            lambda s, eid, etype, **kw: probes.append(1) or ["@I", "S", "1", "D"])
+        t, ev = _run_listener(serial_conn, mqtt, app_state, AppConfig(watchdog_interval=0.05))
+        try:
+            assert _wait_for(lambda: len(probes) >= 2, timeout=3)
+            assert t.is_alive()
+            assert mqtt.payload_for("cardio2e/alarm/state/1") is None   # a probe publishes nothing
+        finally:
+            ev.set()
+            t.join(timeout=3)
+
+    def test_nack_counts_as_alive(self, mqtt, serial_conn, app_state, monkeypatch):
+        probes = []
+
+        def nacked(s, eid, etype, on_nack=None, **kw):
+            probes.append(1)
+            on_nack(["@N", "S", "1", "3"])
+
+        monkeypatch.setattr(cardio2e_listener, "query_state", nacked)
+        t, ev = _run_listener(serial_conn, mqtt, app_state, AppConfig(watchdog_interval=0.05))
+        try:
+            assert _wait_for(lambda: len(probes) >= 2, timeout=3)
+            assert t.is_alive()
+        finally:
+            ev.set()
+            t.join(timeout=3)
+
+    def test_disabled_with_zero(self, mqtt, serial_conn, app_state, monkeypatch):
+        probes = []
+        monkeypatch.setattr(cardio2e_listener, "query_state", lambda *a, **kw: probes.append(1))
+        t, ev = _run_listener(serial_conn, mqtt, app_state, AppConfig(watchdog_interval=0))
+        try:
+            time.sleep(0.7)
+            assert probes == [] and t.is_alive()
+        finally:
+            ev.set()
+            t.join(timeout=3)
+
+    def test_received_bytes_postpone_the_probe(self, mqtt, serial_conn, app_state, monkeypatch):
+        import cardio2e_modules.cardio2e_serial as cs
+        probes = []
+        monkeypatch.setattr(cardio2e_listener, "query_state", lambda *a, **kw: probes.append(1))
+        monkeypatch.setattr(cs, "_last_rx", time.monotonic() + 60)   # "just received"
+        t, ev = _run_listener(serial_conn, mqtt, app_state, AppConfig(watchdog_interval=0.05))
+        try:
+            time.sleep(0.7)
+            assert probes == [] and t.is_alive()
+        finally:
+            ev.set()
+            t.join(timeout=3)
+
+
+class TestGetEntityStateCoverGarbled:
+    def test_garbled_position_is_discarded(self, mqtt, serial_conn, app_state):
+        # The position read is sent back to the controller by STOP
+        app_state.set_entity_state("C", 2, "80")
+        serial_conn.feed(b"@I C 2 5O\r")
+        assert cardio2e_listener._get_entity_state(serial_conn, mqtt, 2, "C", AppConfig(), app_state) is None
+        assert app_state.get_entity_state("C", 2) == "80"
+        assert mqtt.messages == []
+
+
+class TestDateAtStart:
+    def test_date_is_sent_when_the_listener_starts(self, mqtt, serial_conn, app_state):
+        # Not only after update_date_interval: a controller that lost power
+        # has the wrong time, and the interval restarts on every reconnect
+        t, ev = _run_listener(serial_conn, mqtt, app_state, AppConfig(watchdog_interval=0))
+        try:
+            assert _wait_for(lambda: any(w.startswith("@S D ") for w in serial_conn.written_str()))
+        finally:
+            ev.set()
+            t.join(timeout=3)
+        assert len([w for w in serial_conn.written_str() if w.startswith("@S D ")]) == 1

@@ -193,3 +193,64 @@ class TestHandleBypassCommandRange:
         )
         assert serial_conn.written == []
         assert app_state.bypass_states == "N" * 16
+
+
+class TestBypassCommandRejected:
+    """The new bypass is published when the command is sent. When the
+    controller rejects it (e.g. ``@N B 1 7``, security armed), the cache and
+    Home Assistant must go back to the last state the controller confirmed:
+    the bypass cannot be queried and the cache is written back on the next
+    command."""
+
+    @staticmethod
+    def _dispatch(serial_conn, mqtt, app_state, line):
+        from cardio2e_modules import cardio2e_listener
+        cardio2e_listener._dispatch_message(serial_conn, mqtt, AppConfig(), app_state, line, line.split())
+
+    def _login(self, mqtt, app_state, states=BYPASS):
+        cardio2e_zones.process_login_bypass(mqtt, f"@I B 1 {states}", app_state)
+
+    def _set(self, serial_conn, mqtt, app_state, zone, payload):
+        cardio2e_zones.handle_bypass_command(
+            serial_conn, mqtt, f"cardio2e/zone/bypass/set/{zone}", payload, app_state)
+
+    def test_nack_reverts_cache_and_published_state(self, mqtt, serial_conn, app_state):
+        self._login(mqtt, app_state)
+        self._set(serial_conn, mqtt, app_state, 3, "ON")
+        assert mqtt.payload_for("cardio2e/zone/bypass/state/3") == "ON"
+        self._dispatch(serial_conn, mqtt, app_state, "@N B 1 7")
+        assert app_state.bypass_states == BYPASS
+        assert mqtt.payload_for("cardio2e/zone/bypass/state/3") == "OFF"
+        assert mqtt.payload_for("cardio2e/zone/bypass/state/2") == "ON"
+
+    def test_truncated_nack_also_reverts(self, mqtt, serial_conn, app_state):
+        self._login(mqtt, app_state)
+        self._set(serial_conn, mqtt, app_state, 3, "ON")
+        self._dispatch(serial_conn, mqtt, app_state, "@N B 7")
+        assert app_state.bypass_states == BYPASS
+
+    def test_ack_confirms_the_new_state(self, mqtt, serial_conn, app_state):
+        self._login(mqtt, app_state)
+        self._set(serial_conn, mqtt, app_state, 3, "ON")
+        self._dispatch(serial_conn, mqtt, app_state, "@A B 1")
+        accepted = app_state.bypass_states
+        self._set(serial_conn, mqtt, app_state, 4, "ON")
+        self._dispatch(serial_conn, mqtt, app_state, "@N B 1 7")
+        assert app_state.bypass_states == accepted
+        assert mqtt.payload_for("cardio2e/zone/bypass/state/3") == "ON"
+        assert mqtt.payload_for("cardio2e/zone/bypass/state/4") == "OFF"
+
+    def test_update_from_controller_is_the_confirmed_state(self, mqtt, serial_conn, app_state):
+        self._login(mqtt, app_state)
+        updated = "NNNY" + "N" * 12
+        cardio2e_zones.process_bypass_update(mqtt, ["@I", "B", "1", updated], app_state)
+        self._set(serial_conn, mqtt, app_state, 3, "ON")
+        self._dispatch(serial_conn, mqtt, app_state, "@N B 1 7")
+        assert app_state.bypass_states == updated
+
+    def test_nack_without_confirmed_state_keeps_cache(self, mqtt, serial_conn, app_state):
+        # Bypass never reported by the controller: nothing to go back to
+        self._set(serial_conn, mqtt, app_state, 3, "ON")
+        sent = app_state.bypass_states
+        self._dispatch(serial_conn, mqtt, app_state, "@N B 1 7")
+        assert app_state.bypass_states == sent

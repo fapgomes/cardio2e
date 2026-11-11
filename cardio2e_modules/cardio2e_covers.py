@@ -1,6 +1,7 @@
 """Cover entity logic for cardio2e."""
 
 import logging
+import re
 import threading
 
 from .cardio2e_serial import send_command
@@ -8,9 +9,27 @@ from .cardio2e_serial import send_command
 _LOGGER = logging.getLogger(__name__)
 
 
-def initialize_entity_cover(serial_conn, mqtt_client, get_name_fn, get_entity_state_fn, num_entities, fetch_names, skip_init_state):
+def process_login(mqtt_client, message, app_state):
+    """Process an @I C message from the login response: the position is
+    published and cached, so the cover is not queried at startup."""
+    match = re.match(r"@I C (\d+) (\d{1,3})\s*$", message)
+    if not match or int(match.group(2)) > 100:
+        _LOGGER.warning("Discarding garbled cover state on login: %s", message)
+        return
+    cover_id, cover_state = int(match.group(1)), match.group(2)
+    app_state.set_entity_state("C", cover_id, cover_state)
+    mqtt_client.publish(f"cardio2e/cover/state/{cover_id}", cover_state, retain=True)
+    _LOGGER.info("Cover %d state published to MQTT: %s", cover_id, cover_state)
+
+
+def initialize_entity_cover(serial_conn, mqtt_client, get_name_fn, get_entity_state_fn, num_entities, fetch_names,
+                            skip_init_state, app_state=None):
     """
     Initialize all entities of type cover and publish them to MQTT.
+
+    With ``app_state``, a cover whose position is already known (reported
+    by the login, or cached before a serial reconnect) is not queried:
+    ``@G C`` makes the controller drive the motor of a standing cover.
     """
     _LOGGER.info("Initializing entity state from type cover...")
 
@@ -26,8 +45,12 @@ def initialize_entity_cover(serial_conn, mqtt_client, get_name_fn, get_entity_st
                 # No name response: this cover slot is not defined. Skip its
                 # state query too, so undefined covers cost almost nothing.
                 continue
-        if not skip_init_state:
-            get_entity_state_fn(serial_conn, mqtt_client, entity_id, "C")
+        if skip_init_state:
+            continue
+        if app_state is not None and app_state.get_entity_state("C", entity_id) is not None:
+            _LOGGER.debug("Cover %d state already known; not querying it.", entity_id)
+            continue
+        get_entity_state_fn(serial_conn, mqtt_client, entity_id, "C")
 
     _LOGGER.info("States of all entities of type cover have been initialized.")
 
@@ -51,7 +74,7 @@ def handle_set_position(serial_conn, topic, payload):
     send_command(serial_conn, "C", cover_id, position)
 
 
-def handle_command(serial_conn, mqtt_client, topic, payload, get_entity_state_fn):
+def handle_command(serial_conn, mqtt_client, topic, payload, get_entity_state_fn, app_state=None):
     """Handle an MQTT command (OPEN/CLOSE/STOP) for a cover."""
     try:
         cover_id = int(topic.split("/")[-1])
@@ -68,7 +91,7 @@ def handle_command(serial_conn, mqtt_client, topic, payload, get_entity_state_fn
         # Run in a separate thread to avoid blocking the MQTT callback
         t = threading.Thread(
             target=_stop_cover,
-            args=(serial_conn, mqtt_client, cover_id, get_entity_state_fn),
+            args=(serial_conn, mqtt_client, cover_id, get_entity_state_fn, app_state),
             daemon=True,
         )
         t.start()
@@ -76,7 +99,7 @@ def handle_command(serial_conn, mqtt_client, topic, payload, get_entity_state_fn
         _LOGGER.error("Invalid command received: %s", command)
 
 
-def _stop_cover(serial_conn, mqtt_client, cover_id, get_entity_state_fn):
+def _stop_cover(serial_conn, mqtt_client, cover_id, get_entity_state_fn, app_state=None):
     """Emulate STOP for a moving cover.
 
     The Secant protocol has no STOP transaction for curtains (only ``@S C o d``
@@ -92,7 +115,10 @@ def _stop_cover(serial_conn, mqtt_client, cover_id, get_entity_state_fn):
        ``process_update`` — that is what leaves MQTT with the real resting
        position.
 
-    If the read fails, any value works as a stop command, hence the dummy 50.
+    If the read fails, any value stops a cover that is still moving, but one
+    that has stopped in the meantime would be driven to that value. So the
+    last known position is sent (a no-op for a standing cover); the dummy 50
+    is only used when no position was ever seen.
 
     Note the periodic sync deliberately does NOT use ``@G C``: on a cover that
     is standing still it makes the controller re-issue the position command to
@@ -105,8 +131,13 @@ def _stop_cover(serial_conn, mqtt_client, cover_id, get_entity_state_fn):
         if position is not None:
             send_command(serial_conn, "C", cover_id, position)
             _LOGGER.info("Cover %d stopped at position: %s", cover_id, position)
+            return
+        cached = app_state.get_entity_state("C", cover_id) if app_state is not None else None
+        if cached is not None:
+            send_command(serial_conn, "C", cover_id, cached)
+            _LOGGER.warning("Cover %d: could not query position, sent last known %s to stop.", cover_id, cached)
         else:
-            # Fallback: any @S C stops a moving cover, so send a dummy position
+            # Any @S C stops a moving cover, so send a dummy position
             send_command(serial_conn, "C", cover_id, 50)
             _LOGGER.warning("Cover %d: could not query position, sent dummy 50 to stop.", cover_id)
     except Exception as e:

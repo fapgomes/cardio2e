@@ -16,6 +16,9 @@ update_date_interval = 3600
 # periodic sync interval in seconds (re-query all entities to keep HA in sync)
 # 43200 = 12 hours, 0 = disabled
 sync_interval = 43200
+# seconds of serial silence before the controller is probed (@G S 1); with no
+# answer the connection is considered lost and re-opened. 0 = disabled
+watchdog_interval = 300
 
 # lights config
 fetch_light_names = true  # on startup will fetch the current name of lights. After the first time can be disabled.
@@ -48,7 +51,7 @@ config_entities = true  # config entities for the outlet/lamp settings (names, a
 [web]
 # web panel to back up / restore the configuration memory (0 = disabled)
 port = 0
-# comma-separated client addresses allowed to use it (empty = any)
+# comma-separated client addresses allowed to use it (empty = only this machine)
 allowed_clients =
 # where backups are stored
 backup_dir = backups

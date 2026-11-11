@@ -7,7 +7,7 @@ import time
 
 from .cardio2e_serial import (
     send_date, send_command, query_state, SerialReader, reader_active, pending_count,
-    bulk_session_active,
+    bulk_session_active, last_rx_time,
 )
 from . import (
     cardio2e_errors,
@@ -249,6 +249,20 @@ def _sync_all_entities(serial_conn, mqtt_client, config, app_state):
     _LOGGER.info("Periodic entity sync complete: %d entities synced.", count)
 
 
+def _controller_alive(serial_conn):
+    """Probe a controller that has been silent for ``watchdog_interval``
+    seconds with a harmless query (``@G S 1``). Any answer, even a NACK,
+    means it is there; nothing is published."""
+    nacks = []
+
+    def on_nack(parts):
+        nacks.append(parts)
+        return True
+
+    reply = query_state(serial_conn, 1, "S", quiet=True, on_nack=on_nack)
+    return reply is not None or bool(nacks)
+
+
 def _publish_heartbeat(mqtt_client, app_state):
     """Publish heartbeat and diagnostics to MQTT."""
     timestamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
@@ -344,9 +358,12 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state, shutdown_eve
     Returns when the connection is lost (reader stopped) or when
     ``shutdown_event`` is set, so the caller can reconnect or shut down.
     """
-    last_time_sent = time.monotonic()
+    # Due at once: a controller that lost power has the wrong time, and this
+    # interval restarts on every serial reconnect
+    last_time_sent = time.monotonic() - config.update_date_interval
     last_heartbeat = time.monotonic()
     last_sync = time.monotonic()
+    last_probe = time.monotonic()
     was_bulk = False
 
     # Publish diagnostics autodiscovery on start
@@ -392,6 +409,23 @@ def listen_for_updates(serial_conn, mqtt_client, config, app_state, shutdown_eve
                 _sync_all_entities(serial_conn, mqtt_client, config, app_state)
                 last_sync = now
             was_bulk = bulk
+
+            # States published while the MQTT broker was away were lost
+            if app_state.pop_sync_request():
+                _LOGGER.info("MQTT broker reconnected; re-syncing all entities.")
+                _sync_all_entities(serial_conn, mqtt_client, config, app_state)
+                last_sync = now
+
+            # Watchdog: a controller switched off or restarted leaves the
+            # port open and silent. Not during a memory session, which has
+            # its own traffic and timeouts.
+            if config.watchdog_interval > 0 and not bulk:
+                if now - max(last_rx_time(), last_probe) >= config.watchdog_interval:
+                    if not _controller_alive(serial_conn):
+                        _LOGGER.error("No answer from cardio2e after %.0fs of silence; "
+                                      "connection considered lost.", config.watchdog_interval)
+                        break
+                    last_probe = time.monotonic()
 
             # Publish heartbeat + diagnostics periodically
             if (now - last_heartbeat) >= HEARTBEAT_INTERVAL:
@@ -454,6 +488,7 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
             # handle_bypass_command; we do NOT re-query the controller, which
             # rejects @G B 1 (@N B 2) and garbles the stream when flooded.
             _LOGGER.info("OK for bypass set.")
+            app_state.confirm_bypass_states()
 
     # NACK messages (@N)
     elif len(message_parts) >= 3 and message_parts[0] == "@N":
@@ -461,6 +496,9 @@ def _dispatch_message(serial_conn, mqtt_client, config, app_state, msg, message_
         app_state.increment_errors()
         app_state.set_last_error(error_msg)
         _LOGGER.info("\n#######\nNACK from cardio with transaction %s: %s", msg, error_msg)
+        if message_parts[1] == "B":
+            # Bypass is never queried, so this is a rejected bypass command
+            cardio2e_zones.revert_rejected_bypass(mqtt_client, app_state)
         # "@N <type> <id> <code>" identifies the rejected entity; a truncated
         # "@N <type> <code>" (id lost to garbling) identifies nothing.
         if len(message_parts) >= 4 and message_parts[2].isdigit():
@@ -539,7 +577,18 @@ def _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, 
     message_parts = query_state(serial_conn, entity_id, entity_type, quiet=quiet, on_nack=on_nack)
     if message_parts is None:
         return None
+    try:
+        return _publish_queried_state(mqtt_client, entity_id, entity_type, config, app_state, message_parts)
+    except (ValueError, IndexError):
+        # A value garbled on the wire (e.g. "@I L 5 1O0"). Raising here would
+        # leave the housekeeping loop and force a serial reconnect.
+        _LOGGER.warning("Discarding garbled state reply: %s", " ".join(message_parts))
+        return None
 
+
+def _publish_queried_state(mqtt_client, entity_id, entity_type, config, app_state, message_parts):
+    """Publish the state in the reply to a ``@G`` query. Returns the state,
+    or None if the reply is not usable."""
     if entity_type == "L" and len(message_parts) >= 4:
         state = int(message_parts[3])
         light_state = "ON" if state > 0 else "OFF"
@@ -556,6 +605,8 @@ def _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, 
 
     elif entity_type == "C" and len(message_parts) >= 4:
         state = message_parts[3]
+        if not 0 <= int(state) <= 100:      # ValueError: reply discarded
+            raise ValueError("cover position out of range")
         app_state.set_entity_state("C", entity_id, state)
         mqtt_client.publish(f"cardio2e/cover/state/{entity_id}", state, retain=True)
         return state
@@ -566,6 +617,10 @@ def _get_entity_state(serial_conn, mqtt_client, entity_id, entity_type, config, 
         return state
 
     elif entity_type == "H" and len(message_parts) >= 7:
+        # The setpoints are stored and sent back with the next command of
+        # the zone: a garbled one must not get in (ValueError: reply discarded)
+        float(message_parts[3])
+        float(message_parts[4])
         topics = {
             "heating_setpoint": message_parts[3],
             "cooling_setpoint": message_parts[4],

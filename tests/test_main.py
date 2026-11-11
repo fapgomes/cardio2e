@@ -148,3 +148,76 @@ class TestSerialReconnectKeepsMqttClient:
         assert client.unsubscriptions.count("cardio2e/light/set/#") == 2
         availability = [p for t, p, _q, _r in client.published if t == AVAILABILITY_TOPIC]
         assert availability == ["online", "offline", "online", "offline", "offline"]
+
+
+class TestConfigError:
+    def test_main_exits_with_a_message_instead_of_a_traceback(self, monkeypatch, caplog):
+        from cardio2e_modules.cardio2e_config import ConfigError
+
+        def bad_config(path):
+            raise ConfigError("Invalid value for [cardio2e] ncovers: 'twenty' (expected an integer)")
+
+        monkeypatch.setattr(cardio2e, "load_config", bad_config)
+        with caplog.at_level(logging.ERROR), pytest.raises(SystemExit) as exit_info:
+            cardio2e.main()
+        assert exit_info.value.code == 1
+        assert "[cardio2e] ncovers" in caplog.text
+
+
+class TestMqttClientRecreated:
+    def test_settings_manager_follows_the_new_client(self, monkeypatch):
+        class TwoIterationsEvent(threading.Event):
+            def __init__(self):
+                super().__init__()
+                self.waits = 0
+
+            def wait(self, timeout=None):
+                self.waits += 1
+                if self.waits >= 2:
+                    self.set()
+                    return True
+                return False
+
+        class FakeSettings:
+            instances = []
+
+            def __init__(self, memory_service, mqtt_client, config, app_state):
+                self.mqtt = mqtt_client
+                FakeSettings.instances.append(self)
+
+            def start(self):
+                pass
+
+            def request_reload(self):
+                pass
+
+            def set_mqtt_client(self, mqtt_client):
+                self.mqtt = mqtt_client
+
+        monkeypatch.setattr(cardio2e.threading, "Event", TwoIterationsEvent)
+        monkeypatch.setattr(cardio2e, "load_config", lambda path: AppConfig(ncovers=0, nscenarios=0))
+        monkeypatch.setattr(cardio2e, "_connect_serial", lambda cfg: FakeSerial())
+        monkeypatch.setattr(cardio2e, "SettingsManager", FakeSettings)
+        created = []
+        real_create = cardio2e.create_mqtt_client
+
+        def create(*args):
+            c = real_create(*args)
+            if not created:
+                # The first client turns out unusable when the serial is lost
+                def broken(topic):
+                    raise RuntimeError("client is dead")
+                c.unsubscribe = broken
+            created.append(c)
+            return c
+        monkeypatch.setattr(cardio2e, "create_mqtt_client", create)
+        monkeypatch.setattr(cardio2e, "login", lambda conn, pw: "@I V C 1\r")
+        monkeypatch.setattr(cardio2e, "listen_for_updates", lambda *a, **k: None)
+
+        cardio2e.main()
+
+        assert len(created) == 2
+        assert len(FakeSettings.instances) == 1
+        settings = FakeSettings.instances[0]
+        assert settings.mqtt is created[1]
+        assert created[1].user_data_get()["settings"] is settings

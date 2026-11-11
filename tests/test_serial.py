@@ -150,3 +150,34 @@ class TestQueryNack:
         with caplog.at_level(logging.WARNING, logger="cardio2e_modules.cardio2e_serial"):
             query_state(conn, 5, "L", timeout=0.2, max_retries=1)
         assert "out of range" in caplog.text
+
+
+class TestSendCommandSceneCodeLogLevel:
+    """A scenario with security actions carries the security code
+    (``@S M <id> <code>``): that frame is logged at DEBUG only."""
+
+    def test_scene_code_not_logged_at_info(self, serial_conn, caplog):
+        with caplog.at_level(logging.INFO, logger="cardio2e_modules.cardio2e_serial"):
+            send_command(serial_conn, "M", 3, "98765")
+        assert serial_conn.last_written_str() == "@S M 3 98765\r"
+        assert "98765" not in caplog.text
+
+    def test_scene_code_logged_at_debug(self, serial_conn, caplog):
+        with caplog.at_level(logging.DEBUG, logger="cardio2e_modules.cardio2e_serial"):
+            send_command(serial_conn, "M", 3, "98765")
+        assert "@S M 3 98765" in caplog.text
+
+    def test_scene_without_code_still_logged_at_info(self, serial_conn, caplog):
+        with caplog.at_level(logging.INFO, logger="cardio2e_modules.cardio2e_serial"):
+            send_command(serial_conn, "M", 3)
+        assert "@S M 3" in caplog.text
+
+    def test_scene_code_not_logged_when_held_for_memory_mode(self, serial_conn, caplog, monkeypatch):
+        import time
+        import cardio2e_modules.cardio2e_serial as cs
+        monkeypatch.setattr(cs, "MEMORY_MODE_EXIT", 0.05)
+        monkeypatch.setattr(cs, "_last_bulk_exchange", time.monotonic())
+        with caplog.at_level(logging.INFO, logger="cardio2e_modules.cardio2e_serial"):
+            send_command(serial_conn, "M", 3, "98765")
+        assert serial_conn.last_written_str() == "@S M 3 98765\r"
+        assert "98765" not in caplog.text

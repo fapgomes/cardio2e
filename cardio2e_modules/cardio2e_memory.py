@@ -423,9 +423,12 @@ class MemoryService(object):
         return name
 
     def _write_file(self, name, data):
-        os.makedirs(self.backup_dir, exist_ok=True)
+        # Private: a memory image holds the user and installer codes
+        os.makedirs(self.backup_dir, mode=0o700, exist_ok=True)
         tmp = os.path.join(self.backup_dir, "." + name + ".tmp")
-        with open(tmp, "wb") as f:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            os.fchmod(fd, 0o600)
             f.write(data)
         os.replace(tmp, os.path.join(self.backup_dir, name))
 

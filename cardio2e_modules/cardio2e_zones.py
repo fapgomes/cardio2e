@@ -130,6 +130,19 @@ def handle_bypass_command(serial_conn, mqtt_client, topic, payload, app_state):
     publish_bypass_states(mqtt_client, new_states)
 
 
+def revert_rejected_bypass(mqtt_client, app_state):
+    """A bypass command got a ``@N B`` (e.g. security armed): the state
+    published when it was sent is wrong. Go back to the last bypass the
+    controller confirmed and republish it; the bypass cannot be queried."""
+    states = app_state.revert_bypass_states()
+    if not states:
+        _LOGGER.warning("Bypass command rejected, but the controller never reported the bypass; "
+                        "the published state may be wrong.")
+        return
+    _LOGGER.warning("Bypass command rejected; bypass states reverted to %s", states)
+    publish_bypass_states(mqtt_client, states)
+
+
 def process_zone_update(mqtt_client, message_parts, config, app_state):
     """Process an @I Z update from the serial listener."""
     zone_states = message_parts[3]
@@ -157,6 +170,7 @@ def process_bypass_update(mqtt_client, message_parts, app_state):
         return
     with app_state.lock:
         app_state.bypass_states = states
+        app_state.confirm_bypass_states()
     publish_bypass_states(mqtt_client, states)
 
 
@@ -188,6 +202,7 @@ def process_login_bypass(mqtt_client, message, app_state):
         states = match.group(1)
         with app_state.lock:
             app_state.bypass_states = states
+            app_state.confirm_bypass_states()
         for i, bypass_state_char in enumerate(states, start=1):
             bypass_state = interpret_bypass_character(bypass_state_char)
             mqtt_client.publish(f"cardio2e/zone/bypass/state/{i}", bypass_state, retain=True)

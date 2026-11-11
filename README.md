@@ -158,12 +158,13 @@ The config file has three main sections and an optional `[web]` section. Inline 
 | `password` | `00000` | Cardio2e login password |
 | `update_date_interval` | `3600` | Seconds between sending the date to the controller |
 | `sync_interval` | `43200` | Seconds between periodic re-sync of all entities (`0` disables) |
+| `watchdog_interval` | `300` | Seconds of serial silence before the controller is probed; with no answer the connection is re-opened (`0` disables) |
 | `fetch_light_names` | `true` | Fetch light names on startup (can be disabled after first run) |
 | `dimmer_lights` | `[]` | List of light ids to treat as dimmers (brightness) |
 | `force_include_lights` | `[]` | Light ids to publish even if absent from the login dump |
 | `fetch_switch_names` | `true` | Fetch switch names on startup |
 | `fetch_cover_names` | `true` | Fetch cover names on startup |
-| `skip_init_cover_state` | `false` | Skip querying cover state on startup |
+| `skip_init_cover_state` | `false` | Skip querying cover state on startup (covers whose position is already known are never queried) |
 | `ncovers` | `20` | Number of covers to initialize (iterated 1..N) |
 | `fetch_names_hvac` | `true` | Fetch HVAC names on startup |
 | `code` | `12345` | Security code used to arm/disarm the alarm |
@@ -199,11 +200,12 @@ written). Before writing, the values being overwritten are saved as a
 | Option | Default | Description |
 |--------|---------|-------------|
 | `port` | `0` | TCP port of the panel (`0` disables it) |
-| `allowed_clients` | *(empty)* | Comma-separated client addresses allowed to use the panel (empty = any) |
+| `allowed_clients` | *(empty)* | Comma-separated client addresses allowed to use the panel (empty = only the machine the bridge runs on) |
 | `backup_dir` | `backups` | Directory where backups are stored |
 
-> **The panel has no authentication.** Restrict it with `allowed_clients` or
-> a firewall. In the Home Assistant add-on it is only reachable through the
+> **The panel has no authentication**, and a backup holds the user and
+> installer codes. List the machines that may use it in `allowed_clients`;
+> backup files are created readable only by the bridge's user. In the Home Assistant add-on it is only reachable through the
 > Home Assistant sidebar (ingress), which handles the login.
 
 ## Development

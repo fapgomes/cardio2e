@@ -212,3 +212,22 @@ class TestOnConnectAvailability:
         cardio2e_mqtt._on_connect(client, client.user_data_get(), {}, 0)
         assert self._availability(client) == ["online"]
         assert "cardio2e/light/set/#" in client.subscriptions
+
+
+class TestOnConnectRequestsSync:
+    """States published while the broker was away are lost (QoS 0): a
+    reconnect after init asks the housekeeping loop for a full sync."""
+
+    def test_reconnect_after_init_requests_a_sync(self):
+        state = AppState()
+        client = cardio2e_mqtt.create_mqtt_client(AppConfig(), FakeSerial(), state, lambda *a: None)
+        client.user_data_get()["init_complete"] = True
+        cardio2e_mqtt._on_connect(client, client.user_data_get(), {}, 0)
+        assert state.pop_sync_request() is True
+        assert state.pop_sync_request() is False
+
+    def test_connect_before_init_requests_nothing(self):
+        state = AppState()
+        client = cardio2e_mqtt.create_mqtt_client(AppConfig(), FakeSerial(), state, lambda *a: None)
+        cardio2e_mqtt._on_connect(client, client.user_data_get(), {}, 0)
+        assert state.pop_sync_request() is False

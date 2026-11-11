@@ -9,6 +9,44 @@ import time
 _LOGGER = logging.getLogger(__name__)
 
 
+class ConfigError(RuntimeError):
+    """The configuration file is missing, incomplete or has an invalid value."""
+
+
+_TRUE_VALUES = ("true", "yes", "on", "1")
+_FALSE_VALUES = ("false", "no", "off", "0")
+
+
+def _get_bool(section, section_name, option, default):
+    """Boolean option: true/yes/on/1 or false/no/off/0 (any case). Any other
+    value counts as false, as it always did, but is reported."""
+    raw = section.get(option, default).strip().lower()
+    if raw in _TRUE_VALUES:
+        return True
+    if raw not in _FALSE_VALUES:
+        _LOGGER.warning("Invalid value for [%s] %s: %r (expected true or false); using false.",
+                        section_name, option, raw)
+    return False
+
+
+def _get_int(section, section_name, option, default=None):
+    """Integer option; ``default=None`` makes it mandatory."""
+    raw = _require(section, section_name, option) if default is None else section.get(option, default)
+    try:
+        return int(raw)
+    except ValueError:
+        raise ConfigError("Invalid value for [%s] %s: %r (expected an integer)"
+                          % (section_name, option, raw)) from None
+
+
+def _require(section, section_name, option):
+    """Mandatory option."""
+    try:
+        return section[option]
+    except KeyError:
+        raise ConfigError("Missing option [%s] %s in the config file" % (section_name, option)) from None
+
+
 def _parse_list_config(raw_value, field_name):
     """Parse a list value from config, returning list of ints."""
     try:
@@ -35,6 +73,8 @@ class AppConfig(object):
         self.password = kwargs.get("password", "00000")
         self.update_date_interval = kwargs.get("update_date_interval", 3600)
         self.sync_interval = kwargs.get("sync_interval", 43200)
+        # Seconds of serial silence before the controller is probed; 0 = disabled
+        self.watchdog_interval = kwargs.get("watchdog_interval", 300)
 
         # Lights
         self.fetch_light_names = kwargs.get("fetch_light_names", True)
@@ -87,6 +127,7 @@ class AppState(object):
         self._lock = threading.RLock()
         self._hvac_states = {}
         self._bypass_states = ""
+        self._confirmed_bypass_states = ""  # last bypass the controller reported or acked
         self._known_entities = set()  # {(entity_type, entity_id)} seen on the bus
         self._absent_entities = set()  # {(entity_type, entity_id)} the controller says do not exist
         self._entity_names = {}  # {(entity_type, entity_id): name}
@@ -103,6 +144,7 @@ class AppState(object):
         self._reconnects = 0
         self._last_command = ""
         self._last_error = ""
+        self._sync_requested = False
         self._start_time = time.monotonic()
         # Seed with start time so the metric is always a number (never None /
         # "unknown" in HA); it reads as "time since startup" until the first
@@ -130,6 +172,17 @@ class AppState(object):
     def set_last_command(self, cmd):
         with self._lock:
             self._last_command = cmd
+
+    def request_sync(self):
+        """Ask the housekeeping loop for a full entity sync (any thread)."""
+        with self._lock:
+            self._sync_requested = True
+
+    def pop_sync_request(self):
+        """True, once, if a sync was requested since the last call."""
+        with self._lock:
+            requested, self._sync_requested = self._sync_requested, False
+            return requested
 
     def get_diagnostics(self):
         with self._lock:
@@ -165,6 +218,21 @@ class AppState(object):
     def bypass_states(self, value):
         with self._lock:
             self._bypass_states = value
+
+    def confirm_bypass_states(self):
+        """The controller reported or acked the cached bypass: it is the
+        state to go back to if a later bypass command is rejected."""
+        with self._lock:
+            self._confirmed_bypass_states = self._bypass_states
+
+    def revert_bypass_states(self):
+        """Put the last confirmed bypass back in the cache (a bypass command
+        was rejected). Returns it, or "" if the controller never confirmed
+        one (the cache is then left as it is)."""
+        with self._lock:
+            if self._confirmed_bypass_states:
+                self._bypass_states = self._confirmed_bypass_states
+            return self._confirmed_bypass_states
 
     def register_entity(self, entity_type, entity_id):
         """Mark an entity as known (present on the bus), independently of
@@ -336,43 +404,47 @@ def load_config(path="cardio2e.conf"):
     config = configparser.ConfigParser(inline_comment_prefixes=("#", ";"))
     files_read = config.read(path)
     if not files_read:
-        raise RuntimeError("Config file not found or not readable: %s" % path)
+        raise ConfigError("Config file not found or not readable: %s" % path)
     _LOGGER.info("Config loaded from: %s, sections: %s", path, config.sections())
 
+    for section_name in ("global", "cardio2e", "mqtt"):
+        if not config.has_section(section_name):
+            raise ConfigError("Missing section [%s] in the config file" % section_name)
     c2e = config["cardio2e"]
     mqtt = config["mqtt"]
     glb = config["global"]
     web = config["web"] if config.has_section("web") else {}
 
     return AppConfig(
-        debug=int(glb.get("debug", "0")),
+        debug=_get_int(glb, "global", "debug", "0"),
         ha_discover_prefix=glb.get("ha_discover_prefix", "homeassistant"),
         serial_port=c2e.get("serial_port", "/dev/ttyUSB0"),
-        baudrate=int(c2e.get("baudrate", "9600")),
-        password=c2e["password"],
-        update_date_interval=int(c2e.get("update_date_interval", "3600")),
-        sync_interval=int(c2e.get("sync_interval", "43200")),
-        fetch_light_names=c2e.get("fetch_light_names", "true").lower() == "true",
+        baudrate=_get_int(c2e, "cardio2e", "baudrate", "9600"),
+        password=_require(c2e, "cardio2e", "password"),
+        update_date_interval=_get_int(c2e, "cardio2e", "update_date_interval", "3600"),
+        sync_interval=_get_int(c2e, "cardio2e", "sync_interval", "43200"),
+        watchdog_interval=_get_int(c2e, "cardio2e", "watchdog_interval", "300"),
+        fetch_light_names=_get_bool(c2e, "cardio2e", "fetch_light_names", "true"),
         dimmer_lights=_parse_list_config(c2e.get("dimmer_lights", "[]"), "dimmer_lights"),
         force_include_lights=_parse_list_config(c2e.get("force_include_lights", "[]"), "force_include_lights"),
-        fetch_switch_names=c2e.get("fetch_switch_names", "true").lower() == "true",
-        fetch_cover_names=c2e.get("fetch_cover_names", "true").lower() == "true",
-        skip_init_cover_state=c2e.get("skip_init_cover_state", "false").lower() == "true",
-        ncovers=int(c2e.get("ncovers", "20")),
-        fetch_names_hvac=c2e.get("fetch_names_hvac", "true").lower() == "true",
+        fetch_switch_names=_get_bool(c2e, "cardio2e", "fetch_switch_names", "true"),
+        fetch_cover_names=_get_bool(c2e, "cardio2e", "fetch_cover_names", "true"),
+        skip_init_cover_state=_get_bool(c2e, "cardio2e", "skip_init_cover_state", "false"),
+        ncovers=_get_int(c2e, "cardio2e", "ncovers", "20"),
+        fetch_names_hvac=_get_bool(c2e, "cardio2e", "fetch_names_hvac", "true"),
         alarm_code=c2e.get("code", "12345"),
-        fetch_zone_names=c2e.get("fetch_zone_names", "true").lower() == "true",
+        fetch_zone_names=_get_bool(c2e, "cardio2e", "fetch_zone_names", "true"),
         zones_normal_as_off=_parse_list_config(c2e.get("zones_normal_as_off", "[]"), "zones_normal_as_off"),
-        nscenarios=int(c2e.get("nscenarios", "0")),
-        fetch_scenario_names=c2e.get("fetch_scenario_names", "true").lower() == "true",
-        config_entities=c2e.get("config_entities", "true").lower() == "true",
+        nscenarios=_get_int(c2e, "cardio2e", "nscenarios", "0"),
+        fetch_scenario_names=_get_bool(c2e, "cardio2e", "fetch_scenario_names", "true"),
+        config_entities=_get_bool(c2e, "cardio2e", "config_entities", "true"),
         syslog_address=glb.get("syslog_address", ""),
-        syslog_port=int(glb.get("syslog_port", "514")),
-        web_port=int(web.get("port", "0")),
+        syslog_port=_get_int(glb, "global", "syslog_port", "514"),
+        web_port=_get_int(web, "web", "port", "0"),
         web_allowed_clients=[c.strip() for c in web.get("allowed_clients", "").split(",") if c.strip()],
         backup_dir=web.get("backup_dir", "backups"),
-        mqtt_address=mqtt["address"],
-        mqtt_port=int(mqtt["port"]),
-        mqtt_username=mqtt["username"],
-        mqtt_password=mqtt["password"],
+        mqtt_address=_require(mqtt, "mqtt", "address"),
+        mqtt_port=_get_int(mqtt, "mqtt", "port"),
+        mqtt_username=_require(mqtt, "mqtt", "username"),
+        mqtt_password=_require(mqtt, "mqtt", "password"),
     )

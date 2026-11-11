@@ -5,11 +5,12 @@ import logging.handlers
 import os
 import re
 import signal
+import sys
 import threading
 
 import serial
 
-from cardio2e_modules.cardio2e_config import load_config, AppState
+from cardio2e_modules.cardio2e_config import load_config, AppState, ConfigError
 from cardio2e_modules.cardio2e_mqtt import (
     create_mqtt_client, publish_available, publish_not_available,
     subscribe_after_init, suspend_commands, set_serial_conn, set_settings_manager,
@@ -117,6 +118,9 @@ def parse_login_response(response, mqtt_client, serial_conn, config, app_state):
         elif message.startswith("@I R"):
             cardio2e_switches.process_login(mqtt_client, message, serial_conn, config, app_state, _get_name_fn)
 
+        elif message.startswith("@I C"):
+            cardio2e_covers.process_login(mqtt_client, message, app_state)
+
         elif message.startswith("@I H"):
             cardio2e_hvac.process_login(mqtt_client, message, serial_conn, config, app_state, _get_name_fn)
 
@@ -183,6 +187,7 @@ def _do_login_and_init(serial_conn, mqtt_client, cfg, app_state):
         serial_conn, mqtt_client,
         _get_name_fn, _get_entity_state_fn,
         cfg.ncovers, cfg.fetch_cover_names, cfg.skip_init_cover_state,
+        app_state=app_state,
     )
     get_name(serial_conn, 1, "S", mqtt_client, cfg, app_state)
     cardio2e_scenarios.initialize_scenarios(serial_conn, mqtt_client, cfg, app_state)
@@ -196,7 +201,11 @@ def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(script_dir, "cardio2e.conf")
     _LOGGER.info("Loading config from: %s (exists: %s)", config_path, os.path.exists(config_path))
-    cfg = load_config(config_path)
+    try:
+        cfg = load_config(config_path)
+    except ConfigError as e:
+        _LOGGER.error("%s", e)
+        sys.exit(1)
     app_state = AppState()
 
     if cfg.debug:
@@ -215,6 +224,7 @@ def main():
 
     memory_service = MemoryService(cfg.backup_dir)
     settings_started = False
+    settings = None
     if cfg.web_port:
         try:
             start_web_server(memory_service, cfg.web_port, cfg.web_allowed_clients)
@@ -249,6 +259,11 @@ def main():
                     return get_entity_state(s_conn, m_client, eid, etype, cfg, app_state)
 
                 mqtt_client = create_mqtt_client(cfg, serial_conn, app_state, _get_entity_state_fn)
+                if settings is not None:
+                    # The previous client was dropped as unusable: the config
+                    # entities publish and take commands through the new one
+                    settings.set_mqtt_client(mqtt_client)
+                    set_settings_manager(mqtt_client, settings)
             else:
                 set_serial_conn(mqtt_client, serial_conn)
 

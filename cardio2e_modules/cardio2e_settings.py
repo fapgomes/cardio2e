@@ -25,7 +25,7 @@ from .cardio2e_autodiscovery import _availability_block, publish_config
 from .cardio2e_constants import DEVICE_INFO
 from .cardio2e_memory import (
     LAMPS_BASE, LAMPS_COUNT, NAME_SIZE, OUTLETS_BASE, OUTLETS_COUNT, RECORD_SIZE,
-    read_memory, write_memory,
+    MemoryAccessError, read_memory, write_memory,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -33,6 +33,11 @@ _LOGGER = logging.getLogger(__name__)
 TOPIC_ROOT = "cardio2e/config"
 RELOAD_TOPIC = TOPIC_ROOT + "/reload"
 LOCK_TIMEOUT = 5.0      # seconds a change waits for a running backup/restore
+RELOAD_RETRY_DELAY = 10.0   # seconds between the attempts of a reload
+# A reload waits as long as needed for the memory to be free and the
+# controller connected, but gives up after this many reads that really
+# failed: every attempt puts the controller in memory mode.
+RELOAD_MAX_FAILURES = 3
 NAME_LENGTH = NAME_SIZE - 1
 NAME_RE = re.compile(r"^[ -~]{1,%d}$" % NAME_LENGTH)   # printable ASCII
 TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
@@ -259,6 +264,10 @@ class SettingsManager(object):
         self._thread.start()
         self.request_reload()
 
+    def set_mqtt_client(self, mqtt_client):
+        """Publish through a new MQTT client (the old one was dropped)."""
+        self._mqtt = mqtt_client
+
     def request_reload(self):
         self._queue.put(("reload",))
 
@@ -311,14 +320,20 @@ class SettingsManager(object):
                 continue
             first, last = min(ids), max(ids)
             start = record_address(entity_type, first)
+            failures = 0
             while True:
                 try:
                     with self._memory.exclusive(LOCK_TIMEOUT) as conn:
                         data = read_memory(conn, start, (last - first + 1) * RECORD_SIZE)
                     break
+                except MemoryAccessError as e:
+                    failures += 1
+                    if failures >= RELOAD_MAX_FAILURES:
+                        raise
+                    _LOGGER.warning("Settings reload: memory read failed (%s); retrying.", e)
                 except RuntimeError as e:
                     _LOGGER.info("Settings reload waiting: %s", e)
-                    time.sleep(10)
+                time.sleep(RELOAD_RETRY_DELAY)
             for entity_id in ids:
                 off = (entity_id - first) * RECORD_SIZE
                 record = data[off:off + RECORD_SIZE]

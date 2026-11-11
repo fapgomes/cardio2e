@@ -416,3 +416,18 @@ class TestBulkSessionWindow:
         mem.read_memory(conn, 0x5B30, 8)
         assert cs.bulk_session_active()
         assert not cs.bulk_session_active(time.monotonic() + cs.BULK_SESSION_WINDOW + 0.1)
+
+
+class TestBackupFilePermissions:
+    """A memory image holds the user and installer codes."""
+
+    def test_backup_file_and_directory_are_private(self, tmp_path):
+        backup_dir = tmp_path / "backups"
+        service = mem.MemoryService(str(backup_dir))
+        old_umask = os.umask(0o022)
+        try:
+            name = service.save_upload("x.bin", bytes(mem.MEMORY_SIZE))
+        finally:
+            os.umask(old_umask)
+        assert os.stat(backup_dir / name).st_mode & 0o777 == 0o600
+        assert os.stat(backup_dir).st_mode & 0o777 == 0o700

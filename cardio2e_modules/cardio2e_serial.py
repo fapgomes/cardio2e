@@ -89,11 +89,17 @@ def _mark_rx():
     _last_rx = time.monotonic()
 
 
+def last_rx_time():
+    """Monotonic time of the last byte received from the controller (0.0 if
+    none yet)."""
+    return _last_rx
+
+
 def _is_action(command):
     return command.startswith("@S") and not command.startswith("@S D")
 
 
-def _hold_for_memory_mode(log_command):
+def _hold_for_memory_mode(log_command, log_level=logging.INFO):
     """Stop bulk traffic for an action command and wait, if needed, until the
     controller has left memory mode (see ``MEMORY_MODE_EXIT``)."""
     global _last_command
@@ -101,8 +107,8 @@ def _hold_for_memory_mode(log_command):
         _last_command = time.monotonic()
         wait = MEMORY_MODE_EXIT - (_last_command - _last_bulk_exchange)
     if _last_bulk_exchange and wait > 0:
-        _LOGGER.info("Holding %s for %.1fs: the controller is still in memory mode.",
-                     log_command.strip(), wait)
+        _LOGGER.log(log_level, "Holding %s for %.1fs: the controller is still in memory mode.",
+                    log_command.strip(), wait)
         time.sleep(wait)
 
 
@@ -223,7 +229,7 @@ def _write(serial_conn, command, log_command=None, log_level=logging.INFO, bulk=
     if log_command is None:
         log_command = command
     if not bulk and _is_action(command):
-        _hold_for_memory_mode(log_command)
+        _hold_for_memory_mode(log_command, log_level)
     with _exchange_lock, _serial_lock:
         if not bulk:
             _mark_activity()
@@ -275,8 +281,12 @@ def send_command(serial_conn, entity_type, entity_id_or_value, state=None,
     else:
         log_command = command
 
+    # A scenario with security actions carries the security code as its
+    # value: log that frame at DEBUG only.
+    log_level = logging.DEBUG if entity_type == "M" and state is not None else logging.INFO
+
     try:
-        _write(serial_conn, command, log_command)
+        _write(serial_conn, command, log_command, log_level=log_level)
         return True
     except Exception as e:
         _LOGGER.error("Error sending command to RS-232: %s", e)

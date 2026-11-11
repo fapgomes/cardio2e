@@ -133,3 +133,46 @@ class TestAppStateDiagnostics:
         assert app_state.get_diagnostics()["seconds_since_last_message"] >= 0
         app_state.record_message()
         assert app_state.get_diagnostics()["seconds_since_last_message"] >= 0
+
+
+def _conf(tmp_path, cardio2e="", glb="", mqtt="address = h\nport = 1883\nusername = u\npassword = p\n"):
+    path = tmp_path / "cardio2e.conf"
+    path.write_text("[global]\n%s\n[cardio2e]\npassword = 00000\n%s\n[mqtt]\n%s\n" % (glb, cardio2e, mqtt))
+    return str(path)
+
+
+class TestLoadConfigValues:
+    @pytest.mark.parametrize("raw,expected", [
+        ("true", True), ("True", True), ("yes", True), ("on", True), ("1", True),
+        ("false", False), ("no", False), ("off", False), ("0", False),
+    ])
+    def test_boolean_spellings(self, tmp_path, raw, expected):
+        cfg = load_config(_conf(tmp_path, "fetch_light_names = %s" % raw))
+        assert cfg.fetch_light_names is expected
+
+    def test_unknown_boolean_is_false_with_a_warning(self, tmp_path, caplog):
+        with caplog.at_level("WARNING"):
+            cfg = load_config(_conf(tmp_path, "fetch_light_names = maybe"))
+        assert cfg.fetch_light_names is False
+        assert "fetch_light_names" in caplog.text
+
+    def test_bad_integer_names_the_option(self, tmp_path):
+        from cardio2e_modules.cardio2e_config import ConfigError
+        with pytest.raises(ConfigError, match=r"\[cardio2e\] ncovers"):
+            load_config(_conf(tmp_path, "ncovers = twenty"))
+
+    def test_missing_option_names_it(self, tmp_path):
+        from cardio2e_modules.cardio2e_config import ConfigError
+        with pytest.raises(ConfigError, match=r"\[mqtt\] password"):
+            load_config(_conf(tmp_path, mqtt="address = h\nport = 1883\nusername = u\n"))
+
+    def test_missing_section_names_it(self, tmp_path):
+        from cardio2e_modules.cardio2e_config import ConfigError
+        path = tmp_path / "c.conf"
+        path.write_text("[global]\n[cardio2e]\npassword = 0\n")
+        with pytest.raises(ConfigError, match=r"\[mqtt\]"):
+            load_config(str(path))
+
+    def test_watchdog_interval(self, tmp_path, sample_config_path):
+        assert load_config(sample_config_path).watchdog_interval == 300
+        assert load_config(_conf(tmp_path, "watchdog_interval = 0")).watchdog_interval == 0

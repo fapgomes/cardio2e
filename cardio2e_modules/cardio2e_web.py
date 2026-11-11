@@ -4,9 +4,11 @@ against the controller and restore them.
 
 Standard library only (``http.server``). All URLs in the page are relative,
 so it works under the ingress path prefix. Requests from addresses outside
-``allowed_clients`` (the Supervisor ingress proxy, in the add-on) get 403.
+``allowed_clients`` (the Supervisor ingress proxy, in the add-on) get 403;
+with no ``allowed_clients``, only requests from this machine are accepted.
 """
 
+import ipaddress
 import json
 import logging
 import threading
@@ -20,6 +22,19 @@ _LOGGER = logging.getLogger(__name__)
 MAX_JSON_BODY = 4096
 
 
+def client_allowed(address, allowed_clients):
+    """True if a client address may use the panel: one of
+    ``allowed_clients`` or, when that is empty, only this machine. The panel
+    has no authentication and the backups hold the security codes."""
+    if allowed_clients:
+        return address in allowed_clients
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    return (getattr(ip, "ipv4_mapped", None) or ip).is_loopback
+
+
 def _make_handler(service, allowed_clients):
     class Handler(BaseHTTPRequestHandler):
         server_version = "cardio2e"
@@ -28,7 +43,7 @@ def _make_handler(service, allowed_clients):
             _LOGGER.debug("web: %s - %s", self.client_address[0], fmt % args)
 
         def _allowed(self):
-            if allowed_clients and self.client_address[0] not in allowed_clients:
+            if not client_allowed(self.client_address[0], allowed_clients):
                 self._send(403, "text/plain", b"forbidden")
                 return False
             return True
@@ -113,6 +128,9 @@ def start_web_server(service, port, allowed_clients=()):
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True, name="cardio2e-web").start()
     _LOGGER.info("Memory web panel listening on port %d.", port)
+    if not allowed_clients:
+        _LOGGER.warning("Web panel: allowed_clients is empty, so only requests from this "
+                        "machine are accepted.")
     return server
 
 

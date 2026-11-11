@@ -1,0 +1,33 @@
+# Run the test suite on every push and pull request. No hardware or broker
+# is needed: the tests use fakes for the serial port and the MQTT client.
+
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.12 is what the Home Assistant add-on runs; 3.14 is the dev machine
+        python-version: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run the tests
+        run: python -m pytest

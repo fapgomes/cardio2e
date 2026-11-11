@@ -226,3 +226,47 @@ def test_remove_entities(mqtt, app_state):
     assert mqtt.payload_for("homeassistant/number/cardio2e_cfg_switch_9_auto_off/config") == ""
     assert mqtt.payload_for("homeassistant/button/cardio2e_cfg_switch_reload/config") == ""
     assert mqtt.payload_for("homeassistant/button/cardio2e_cfg_light_reload/config") == ""
+
+
+class TestReloadFailures:
+    """A reload waits for the memory to be free or the controller connected,
+    but a read that really fails must not be repeated forever: every attempt
+    puts the controller in memory mode (commands held ~12 s, full re-sync)."""
+
+    def test_gives_up_after_repeated_read_failures(self, setup, mqtt, monkeypatch):
+        _, _, manager = setup
+        monkeypatch.setattr(st, "RELOAD_RETRY_DELAY", 0)
+        real_read = st.read_memory
+        calls = []
+
+        def failing_read(*args, **kwargs):
+            calls.append(1)
+            raise mem.MemoryAccessError("'@G EN' rejected: @N E 1")
+
+        monkeypatch.setattr(st, "read_memory", failing_read)
+        manager.request_reload()
+        assert _wait(lambda: len(calls) == st.RELOAD_MAX_FAILURES)
+        time.sleep(0.2)
+        assert len(calls) == st.RELOAD_MAX_FAILURES
+        # The worker survived and serves the next command
+        monkeypatch.setattr(st, "read_memory", real_read)
+        manager.handle_command("cardio2e/config/switch/9/auto_off/set", "5")
+        assert _wait(lambda: mqtt.payload_for("cardio2e/config/switch/9/auto_off") == "5")
+
+    def test_keeps_waiting_while_the_memory_is_busy(self, setup, mqtt, monkeypatch):
+        conn, service, manager = setup
+        monkeypatch.setattr(st, "RELOAD_RETRY_DELAY", 0.01)
+        conn.mem[st.record_address("R", 9) + 12] = 9
+        with service._op_lock:
+            manager.request_reload()
+            time.sleep(0.2 * (st.RELOAD_MAX_FAILURES + 2))   # several lock timeouts
+        assert _wait(lambda: mqtt.payload_for("cardio2e/config/switch/9/auto_off") == "9")
+
+
+def test_set_mqtt_client_replaces_the_client(setup, mqtt):
+    from _fakes import RecordingMqttClient
+    _, _, manager = setup
+    new_client = RecordingMqttClient()
+    manager.set_mqtt_client(new_client)
+    manager.handle_command("cardio2e/config/switch/9/auto_off/set", "5")
+    assert _wait(lambda: new_client.payload_for("cardio2e/config/switch/9/auto_off") == "5")

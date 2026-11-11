@@ -100,3 +100,21 @@ def test_delete_backup(panel, tmp_path):
     assert code == 200 and not (tmp_path / "cardio2e-1.bin").exists()
     code, body = _post(base + "api/delete", b'{"name": "../etc/passwd"}')
     assert code == 409 and "no such backup" in body["error"]
+
+
+class TestClientAllowed:
+    """Without ``allowed_clients`` only the local machine may use the panel:
+    it has no authentication and the backups hold the security codes."""
+
+    def test_empty_list_allows_only_loopback(self):
+        from cardio2e_modules.cardio2e_web import client_allowed
+        assert client_allowed("127.0.0.1", set())
+        assert client_allowed("::1", set())
+        assert client_allowed("::ffff:127.0.0.1", set())
+        assert not client_allowed("192.168.1.50", set())
+
+    def test_list_allows_exactly_its_addresses(self):
+        from cardio2e_modules.cardio2e_web import client_allowed
+        assert client_allowed("172.30.32.2", {"172.30.32.2"})
+        assert not client_allowed("192.168.1.50", {"172.30.32.2"})
+        assert not client_allowed("127.0.0.1", {"172.30.32.2"})

@@ -97,6 +97,11 @@ def _on_connect(client, userdata, flags, rc, properties=None):
     if userdata.get("init_complete", False):
         publish_available(client)
         _subscribe_all(client)
+        # Connected after init = the broker came back. States published in
+        # the meantime (QoS 0) were lost: have them all published again.
+        app_state = userdata.get("app_state")
+        if app_state is not None:
+            app_state.request_sync()
     else:
         _LOGGER.info("MQTT connected, waiting for init to complete before subscribing.")
 
@@ -221,7 +226,7 @@ def _route_message(client, userdata, msg):
         cardio2e_covers.handle_set_position(serial_conn, topic, payload)
 
     elif topic.startswith("cardio2e/cover/command/"):
-        cardio2e_covers.handle_command(serial_conn, client, topic, payload, get_entity_state_fn)
+        cardio2e_covers.handle_command(serial_conn, client, topic, payload, get_entity_state_fn, app_state)
 
     elif topic.startswith("cardio2e/hvac/") and "/set/" in topic:
         _LOGGER.debug("HVAC MQTT command received - topic: %s, payload: %s, retain: %s", topic, payload, msg.retain)

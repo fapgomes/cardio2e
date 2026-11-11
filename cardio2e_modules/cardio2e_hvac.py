@@ -130,8 +130,10 @@ def handle_set_command(serial_conn, mqtt_client, topic, payload, app_state):
         send_command(serial_conn, "H", hvac_id, **command)
         # Re-sent once by the housekeeping loop if the controller never acks
         # it (frame garbled on the wire). The command sets every parameter
-        # of the zone, so a duplicate is harmless.
-        app_state.schedule_command_retry("H", hvac_id, command, now)
+        # of the zone, so a duplicate is harmless. The ack timeout counts
+        # from now, not from before the send, which may have been held for
+        # seconds (memory mode).
+        app_state.schedule_command_retry("H", hvac_id, command, time.monotonic())
 
         with app_state.lock:
             hvac_states = app_state.hvac_states
