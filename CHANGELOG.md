@@ -1,5 +1,28 @@
 # Changelog
 
+## v2.7.0 - 2026-11-11
+
+### Features
+- Serial watchdog (`watchdog_interval`, default `300`, `0` disables). After that many seconds without a byte from the controller the bridge probes it with a state query; an answer (a NACK counts) keeps the connection, no answer re-opens the serial port. A link that died without an error (USB adapter, controller restart) is no longer left silent until the next command.
+- Cover positions are taken from the login response. A cover whose position is known is no longer queried at startup or on a serial reconnect (`@G C` moves a standing cover).
+- All entities are re-synced when the MQTT connection is re-established.
+- The date is sent to the controller at startup, not only after the first `update_date_interval`.
+- GitHub workflow running the tests on Python 3.12 and 3.14.
+
+### Changes
+- Web panel: an empty `allowed_clients` now allows only the machine the bridge runs on (loopback), instead of every client. List the addresses that may use the panel. The Home Assistant add-on sets its ingress address and is not affected.
+- Configuration errors (missing section or option, non-numeric integer) are reported with the section and option name and the bridge exits with status 1, instead of a traceback. Booleans also accept `yes`/`on`/`1` and `no`/`off`/`0`; any other value counts as false, with a warning.
+
+### Fixes
+- A garbled reply to a state query (non-numeric HVAC setpoints, a cover position outside 0–100, missing fields) is discarded with a warning. It used to raise in the listener and force a serial reconnect.
+- Scenario (security) codes are no longer written to the log at INFO, in the sent command or in the "holding for memory mode" line; they appear only at DEBUG.
+- A bypass command rejected by the controller (`@N B`) restores the last bypass states the controller confirmed and republishes them. The optimistic value used to stay in the cache and in Home Assistant, and was written back to the controller on the next bypass command.
+- The no-ack retry of an HVAC command counts from the moment the command was sent, not from before a send that memory mode may have held for seconds (which re-sent the command at once).
+- Cover STOP uses the cached position when the position query fails, instead of sending the cover to 50%.
+- Reading the outlet and lamp settings gives up after 3 memory access failures instead of retrying forever; a memory that is merely busy (backup, restore) is still waited for.
+- The settings entities keep working after the MQTT client is re-created.
+- Backup files are created readable only by the bridge's user (`0600`, directory `0700`); they contain the user and installer codes.
+
 ## v2.6.4 - 2026-11-05
 
 ### Fixes
